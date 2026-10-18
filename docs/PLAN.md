@@ -50,7 +50,7 @@ Each phase ends with before/after screenshots in `docs/evidence/`.
 ## Budgets
 
 - Download: under 15 MB of models (12 piece sets plus the board).
-- Pieces: about 17k tris for the rook; pawns about 6k (16 instances).
+- Pieces: 13–20k tris each; pawns 10k (16 instances). About 750k tris in the full scene.
 - Frame: 60 fps on an M-series laptop, 30+ fps on a recent iPhone.
 
 ## Open items (needs input)

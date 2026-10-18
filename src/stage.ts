@@ -187,7 +187,8 @@ export function createStage(canvas: HTMLCanvasElement, onReady: () => void) {
     for (let f = 0; f < 8; f++) {
       for (let r = 0; r < 8; r++) {
         const h = (f * 73 + r * 151 + f * r * 31) % 97;
-        place(slabs[(f + r) % 2 === 1 ? 0 : 1][h % 3], at(f, r), (h % 4) * Math.PI / 2);
+        place(slabs[(f + r) % 2 === 1 ? 0 : 1][h % 3], at(f, r), (h % 4) * Math.PI / 2)
+          .traverse(o => { o.castShadow = false; }); // flat: nothing to cast
       }
     }
 
