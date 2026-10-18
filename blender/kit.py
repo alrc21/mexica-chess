@@ -39,6 +39,20 @@ STONES = {
         blotch="#1a1918", edge="#3a3835", cavity="#020202", pore="#010101",
         rough=(0.62, 0.9), polish=0.35, pores=dict(scale=40, size=0.1, cover=0.15),
     ),
+    # Board, light squares: pale cantera, the soft tuff of colonial Mexico City.
+    "cantera": dict(
+        scan="rock_05", scale=4,
+        ramp=[(0.0, "#6d6150"), (0.4, "#9a8b74"), (0.75, "#b9a98f"), (1.0, "#cdbfa6")],
+        blotch="#8f7f66", edge="#d8cab0", cavity="#3a3228", pore="#2a241c",
+        rough=(0.72, 0.95), polish=0.12, pores=dict(scale=50, size=0.18, cover=0.35),
+    ),
+    # Board, dark squares: grey andesite, fissured.
+    "andesite": dict(
+        scan="dark_rock", scale=3.5,
+        ramp=[(0.0, "#1c1c1b"), (0.4, "#2e2d2b"), (0.75, "#403e3a"), (1.0, "#55524c")],
+        blotch="#262523", edge="#6a665f", cavity="#0b0b0a", pore="#080808",
+        rough=(0.68, 0.92), polish=0.18, pores=dict(scale=40, size=0.1, cover=0.2),
+    ),
 }
 
 
@@ -88,7 +102,11 @@ def tris(ob):
 
 # ── Shapes ──────────────────────────────────────────────────────────────────
 def hexa(bottom, top, chip=True, name="part"):
-    """Solid from 4 bottom + 4 top corners (counter-clockwise seen from above)."""
+    """Solid from 4 bottom + 4 top corners (counter-clockwise seen from above).
+
+    chip: True chips the top and vertical edges, "sides" only the vertical ones
+    (use it when something sits on top and the top edges are buried).
+    """
     bm = bmesh.new()
     b = [bm.verts.new(p) for p in bottom]
     t = [bm.verts.new(p) for p in top]
@@ -101,9 +119,21 @@ def hexa(bottom, top, chip=True, name="part"):
     if chip:
         c = sum((Vector(q) for q in bottom + top), Vector()) / 8
         for i in range(4):
-            EDGES.append((Vector(top[i]), Vector(top[(i + 1) % 4]), c))
+            if chip != "sides":
+                EDGES.append((Vector(top[i]), Vector(top[(i + 1) % 4]), c))
             EDGES.append((Vector(bottom[i]), Vector(top[i]), c))
     return from_bm(name, bm)
+
+
+def rbox(x0, x1, y0, y1, z0, z1, r=0.025):
+    """A box with worn, rounded edges: heads and soft volumes."""
+    bm = bmesh.new()
+    bmesh.ops.create_cube(bm, size=1)
+    bmesh.ops.transform(bm, verts=bm.verts, matrix=Matrix.Translation(((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2))
+                        @ Matrix.Diagonal((x1 - x0, y1 - y0, z1 - z0, 1)))
+    bmesh.ops.bevel(bm, geom=list(bm.edges) + list(bm.verts), offset=r, segments=4, profile=0.5,
+                    affect="EDGES", clamp_overlap=True)
+    return from_bm("rbox", bm)
 
 
 def frustum(w0, d0, w1, d1, z0, z1, x=0.0, y=0.0, chip=True):
@@ -118,24 +148,51 @@ def box(x0, x1, y0, y1, z0, z1, chip=False):
     return hexa(q(z0), q(z1), chip)
 
 
-def prism(profile_yz, x0, x1, chip=False):
-    """A convex 4-point profile in YZ, extruded along X."""
+AXES = {"x": (1, 2, 0), "y": (0, 2, 1), "z": (0, 1, 2)}  # (profile u, profile v, extrusion)
+
+
+def loft(prof0, prof1, a0, a1, axis="x", chip=False):
+    """Solid between two convex profiles of equal size, at a0 and a1 along an axis.
+
+    Profiles use the other two axes in xyz order: x → (y, z), y → (x, z), z → (x, y).
+    """
+    i, j, k = AXES[axis]
+
+    def at(p, t):
+        v = [0.0, 0.0, 0.0]
+        v[i], v[j], v[k] = p[0], p[1], t
+        return Vector(v)
+
+    pa, pb = [at(q, a0) for q in prof0], [at(q, a1) for q in prof1]
     bm = bmesh.new()
-    a = [bm.verts.new((x0, y, z)) for y, z in profile_yz]
-    b = [bm.verts.new((x1, y, z)) for y, z in profile_yz]
+    a = [bm.verts.new(q) for q in pa]
+    b = [bm.verts.new(q) for q in pb]
     bm.faces.new(a)
     bm.faces.new(b[::-1])
-    for i in range(4):
-        j = (i + 1) % 4
-        bm.faces.new((a[i], b[i], b[j], a[j]))
+    n = len(a)
+    for m in range(n):
+        q = (m + 1) % n
+        bm.faces.new((a[m], b[m], b[q], a[q]))
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
-    ob = from_bm("prism", bm)
     if chip:
-        c = Vector(((x0 + x1) / 2, *(sum(q[k] for q in profile_yz) / 4 for k in (0, 1))))
-        for (y0, z0), (y1, z1) in zip(profile_yz, profile_yz[1:] + profile_yz[:1]):
-            EDGES.append((Vector((x0, y0, z0)), Vector((x0, y1, z1)), c))
-            EDGES.append((Vector((x1, y0, z0)), Vector((x1, y1, z1)), c))
-    return ob
+        c = sum(pa + pb, Vector()) / (2 * n)
+        for ring in (pa, pb):
+            EDGES.extend((ring[m], ring[(m + 1) % n], c) for m in range(n))
+    return from_bm("loft", bm)
+
+
+def prism(profile, a0, a1, axis="x", chip=False):
+    """A convex profile extruded along an axis."""
+    return loft(profile, profile, a0, a1, axis, chip)
+
+
+def circle(r, at=(0.0, 0.0), seg=48):
+    return [(at[0] + r * math.cos(math.tau * q / seg), at[1] + r * math.sin(math.tau * q / seg)) for q in range(seg)]
+
+
+def cylinder(r0, a0, a1, axis="z", at=(0.0, 0.0), r1=None, chip=False, seg=48):
+    """Round solid along an axis; r1 flares or narrows the far end."""
+    return loft(circle(r0, at, seg), circle(r0 if r1 is None else r1, at, seg), a0, a1, axis, chip)
 
 
 def relief(cells, cell, depth, origin, u, v, n):
@@ -186,6 +243,103 @@ def meander(units):
         lines.append([(o, 0), (o, 6), (o + 6, 6), (o + 6, 2), (o + 2, 2), (o + 2, 4), (o + 4, 4)])
         lines.append([(o, 0), (o + 8, 0)])
     return {c for c in raster(lines) if c[0] < 8 * units}
+
+
+# ── Glyphs ──────────────────────────────────────────────────────────────────
+# Cell sets centred on (0, 0): cell (i, j) covers [i, i+1] × [j, j+1], so a
+# glyph of half-size n uses i, j in [-n, n). `relief()` places (0, 0) at the
+# point you give it.
+def _grid(n):
+    return [(i, j) for i in range(-n, n) for j in range(-n, n)]
+
+
+def _r(i, j):
+    return math.hypot(i + 0.5, j + 0.5)
+
+
+def square_field(n, frame=2):
+    return {(i, j) for i, j in _grid(n) if max(abs(i + 0.5), abs(j + 0.5)) < n - frame}
+
+
+def disc_field(n, frame=2):
+    return {(i, j) for i, j in _grid(n) if _r(i, j) < n - frame}
+
+
+def ollin(n):
+    """Movement: two crossing bands with the eye at their heart."""
+    out = set()
+    for i, j in _grid(n):
+        x, y, r = i + 0.5, j + 0.5, _r(i, j)
+        if r > n - 4:
+            continue
+        band = min(abs(x - y), abs(x + y)) < n * 0.17
+        eye = r < n * 0.2 or n * 0.3 < r < n * 0.4
+        if (band and r > n * 0.4) or eye:
+            out.add((i, j))
+    return out
+
+
+def volute(n):
+    """The speech scroll of the tlatoani: a square spiral, one cell lines, one cell gaps."""
+    lines, k = [], n - 4
+    pts = [(-k, -k)]
+    x, y, d, step = -k, -k, 0, 2 * k
+    while step > 1:
+        dx, dy = ((1, 0), (0, 1), (-1, 0), (0, -1))[d % 4]
+        x, y = x + dx * step, y + dy * step
+        pts.append((x, y))
+        if d % 4 in (1, 3):
+            step -= 2
+        d += 1
+    lines.append(pts)
+    return raster(lines)
+
+
+def chevrons(w, h, pitch=5):
+    """Feathers: stacked V's opening upward, w×h cells from (-w, 0)."""
+    return {(i, j) for i in range(-w, w) for j in range(h)
+            if (j - abs(i + 0.5) * 0.7) % pitch < 1.4}
+
+
+def rosettes(rng, w, h, count):
+    """Jaguar pelt: broken rings with a dot, scattered over w×h cells."""
+    out = set()
+    for _ in range(count):
+        cx, cy = rng.uniform(3, w - 3), rng.uniform(3, h - 3)
+        for i in range(int(cx) - 4, int(cx) + 4):
+            for j in range(int(cy) - 4, int(cy) + 4):
+                r = math.hypot(i + 0.5 - cx, j + 0.5 - cy)
+                gap = math.atan2(j - cy, i - cx) % 1.6 < 0.35
+                if (2.0 < r < 3.1 and not gap) or r < 0.9:
+                    out.add((i, j))
+    return out
+
+
+def face(cx, z_eyes, y_front, width, depth=0.016):
+    """A Mexica stone face: heavy brow, slit eyes, a ridge of a nose, a straight mouth.
+
+    Returns (solids, cutters).
+    """
+    w = width
+    cut = lambda x0, x1, z0, z1: box(cx + x0, cx + x1, y_front - 0.03, y_front + depth, z0, z1)
+    cutters = [cut(-0.40 * w, -0.11 * w, z_eyes - 0.013, z_eyes + 0.013),
+               cut(0.11 * w, 0.40 * w, z_eyes - 0.013, z_eyes + 0.013),
+               cut(-0.24 * w, 0.24 * w, z_eyes - 0.078, z_eyes - 0.06)]
+    solids = [rbox(cx - 0.065 * w, cx + 0.065 * w, y_front - 0.02, y_front + 0.01, z_eyes - 0.05, z_eyes + 0.012, 0.006),
+              rbox(cx - 0.46 * w, cx + 0.46 * w, y_front - 0.016, y_front + 0.01, z_eyes + 0.02, z_eyes + 0.04, 0.006)]
+    return solids, cutters
+
+
+def spool(x, z, side, r=0.05, t=0.045):
+    """An ear spool on the face at x (side=-1 left, +1 right): disc with a hollow."""
+    a, b = (x - t, x) if side < 0 else (x, x + t)
+    lip = a if side < 0 else b
+    return cylinder(r, a, b, axis="x", at=(0.0, z)), cylinder(r * 0.45, lip - 0.012, lip + 0.012, axis="x", at=(0.0, z))
+
+
+def on_front(cells, cell, depth, cx, cz, y):
+    """Relief cutter on a vertical face looking down -Y, centred at (cx, y, cz)."""
+    return relief(cells, cell, depth, (cx, y, cz), (1, 0, 0), (0, 0, 1), (0, -1, 0))
 
 
 def plinth(size=0.76, h=0.085):
