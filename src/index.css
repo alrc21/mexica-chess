@@ -1,0 +1,23 @@
+@import url('https://fonts.googleapis.com/css2?family=Funnel+Display:wght@300;400;500&family=Funnel+Sans:wght@400;500&family=Fragment+Mono&display=swap');
+@import "tailwindcss";
+
+/* Same type and palette as Curated Motions: one studio, one hand. */
+@theme {
+  --font-display: "Funnel Display", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Funnel Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Fragment Mono", ui-monospace, SFMono-Regular, monospace;
+  --color-ink: #ece6da;
+  --color-soft: rgba(236, 230, 218, 0.58);
+  --color-paper: #0b0a08;
+}
+
+html, body, #root { height: 100%; }
+body {
+  margin: 0;
+  background: #0b0a08;
+  color: #ece6da;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+::selection { background: #ece6da; color: #0b0a08; }

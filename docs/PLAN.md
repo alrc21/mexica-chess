@@ -1,0 +1,64 @@
+# Mexica Chess — plan
+
+A playable 3D chess game in production on the web. Every piece is a carved
+monolith built in Blender. The interface follows Curated Motions. All copy is
+in English.
+
+Working title: **Mexica Chess**. Before proposing a brand, check that the
+domain is free.
+
+## Decisions (2026-10-18)
+
+| | Decision | Why |
+|---|---|---|
+| Pieces | Carved stone monoliths. Rook = the Templo Mayor (stepped pyramid, twin stairs, twin shrines); the others are steles carrying their tonalpohualli day-sign in relief (Ocelotl, Cuauhtli, Ollin…) | Mexica sculpture is blocky and frontal. A script can carry this direction to museum grade; figurative warriors would need generative 3D or a human sculptor |
+| Sides | Red **tezontle** (matte, vesicular) against black **basalt** (matte, polished on the edges) | Raw stone, like the pyramid. The two sides differ in both colour and finish |
+| Pipeline | Python scripts in `blender/`, run headless. Each piece is a voxel-remeshed sculpt of ~1.2M tris with carved boolean cuts, edge chips and noise. It is baked onto a ~17k-tri mesh (base, ORM, normal at 2K) and exported as GLB, then optimised with gltf-transform (meshopt + WebP) | Reproducible. A `.blend` file is never the source of truth |
+| Up close | A tiling grain normal is mixed into the shader on top of the bake | The bake carries the carving, the grain carries the stone at any zoom |
+| Light | A custom lightformer environment (dark, with two braziers, a sky strip and a rim) plus a near-neutral key light | A photographic HDRI washed the basalt out to grey or bronze |
+| Interface | Curated Motions: `#0b0a08` / `#ece6da`, Funnel Display / Funnel Sans / Fragment Mono, plain type in the corners, the `cubic-bezier(.16,1,.3,1)` ease, a curtain transition | One studio, one hand |
+| Stack | Vite + React + three.js. Rules come from chess.js, the opponent is Stockfish WASM in a worker, deployment on Vercel | |
+| Sources | CC0 only: Poly Haven scans | |
+
+## Phases
+
+Each phase ends with before/after screenshots in `docs/evidence/`.
+
+- [x] **0. Vertical slice: the rook.** Blender → GLB → browser with the
+  final look and chrome. Built in 85 s; 0.84–0.96 MB per piece.
+  `docs/evidence/phase0-*`.
+- [ ] **1. The board.** 64 carved slabs with mortar joints. The grecas are a
+  baked relief, not drawn lines. Light squares in a pale stone so both sides
+  read on top of them.
+- [ ] **2. The other five pieces, both sides.** King (stele crowned with the
+  xiuhuitzolli), queen, bishop (Cuauhtli), knight (Ocelotl), pawn. Each must
+  have a silhouette that still reads from the playing camera.
+- [ ] **3. The game.** chess.js rules, Stockfish with difficulty levels,
+  moves in an arc, capture as stone breaking apart, promotion, undo,
+  touch input. Works on mobile.
+- [ ] **4. Scene and polish.** The plaza at night, the Templo Mayor on the
+  horizon, brazier fire, stone-on-stone foley (CC0, not synthesised).
+  KTX2 textures (required: 12 sets at 2K are about 800 MB of VRAM
+  uncompressed), a performance budget, deployment.
+
+## Budgets
+
+- Download: under 15 MB of models (12 piece sets plus the board).
+- Pieces: about 17k tris for the rook; pawns about 6k (16 instances).
+- Frame: 60 fps on an M-series laptop, 30+ fps on a recent iPhone.
+
+## Open items (needs input)
+
+- Name and domain.
+- Optional references from Alberto: photos of stone and pieces he loves,
+  and 2–3 3D sites he considers top tier.
+- Who it is for and what it is for: a portfolio piece, a product, or both.
+
+## Commands
+
+```sh
+python3 blender/fetch.py        # CC0 scans, once
+npm run piece -- rook           # Blender bake → public/models
+npm run dev                     # http://localhost:3100
+node scripts/shoot.mjs <dir> http://localhost:3100 /   # desktop + mobile shots
+```

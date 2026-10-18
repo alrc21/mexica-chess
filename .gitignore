@@ -1,0 +1,6 @@
+node_modules
+dist
+blender/assets
+blender/out
+*.blend1
+.DS_Store
