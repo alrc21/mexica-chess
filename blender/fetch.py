@@ -5,7 +5,7 @@
 import json, pathlib, urllib.request
 
 ROOT = pathlib.Path(__file__).parent / "assets"
-TEXTURES = {"rock_05": "2k", "dark_rock": "2k"}  # tezontle base, basalt base
+TEXTURES = {"rock_05": "2k", "dark_rock": "2k", "monastery_stone_floor": "2k"}  # tezontle, basalt, plaza
 MAPS = {"Diffuse": "diff", "nor_gl": "nor", "Rough": "rough", "Displacement": "disp"}
 HDRIS = {"studio_kontrast_03": "1k", "fireplace": "1k"}
 

@@ -2,7 +2,7 @@
 behind the head, the pointed xiuhuitzolli diadem in front, ear spools, and
 the speech scroll of "the one who speaks" carved on the chest. Front is -Y."""
 import math
-from kit import face, frustum, on_front, plinth, prism, rbox, spool, square_field, volute, _r
+from kit import braid, face, frustum, on_back, on_front, plinth, prism, rbox, spool, square_field, volute, _r
 
 TRIS = 20000
 
@@ -32,6 +32,9 @@ def build(seed=7):
     grooves = {(i, j) for i in range(-n, n) for j in range(0, n)
                if 0.42 * n < _r(i, j) < n - 1.5 and math.degrees(math.atan2(j + 0.5, i + 0.5)) % 12 < 2.4}
     cutters.append(on_front(grooves, R / n, 0.006, 0, cz, 0.10))
+    cutters.append(on_back(grooves, R / n, 0.006, 0, cz, 0.15))
     n, cell = 12, 0.011
     cutters.append(on_front(square_field(n) - volute(n), cell, 0.006, 0, 0.49, -0.205))
+    cutters.append(on_back(square_field(n) - volute(n), cell, 0.006, 0, 0.49, 0.205))
+    cutters.append(on_back(braid(14, 14), 0.011, 0.005, 0, 0.71, 0.17))  # hair under the fan
     return solids, cutters

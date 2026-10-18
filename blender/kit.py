@@ -43,15 +43,15 @@ STONES = {
     "cantera": dict(
         scan="rock_05", scale=4,
         ramp=[(0.0, "#6d6150"), (0.4, "#9a8b74"), (0.75, "#b9a98f"), (1.0, "#cdbfa6")],
-        blotch="#8f7f66", edge="#d8cab0", cavity="#3a3228", pore="#2a241c",
-        rough=(0.72, 0.95), polish=0.12, pores=dict(scale=50, size=0.18, cover=0.35),
+        blotch="#a59479", edge="#d8cab0", cavity="#6a5c4a", pore="#4a4034",
+        rough=(0.72, 0.95), polish=0.12, pores=dict(scale=70, size=0.12, cover=0.2),
     ),
     # Board, dark squares: grey andesite, fissured.
     "andesite": dict(
         scan="dark_rock", scale=3.5,
         ramp=[(0.0, "#1c1c1b"), (0.4, "#2e2d2b"), (0.75, "#403e3a"), (1.0, "#55524c")],
-        blotch="#262523", edge="#6a665f", cavity="#0b0b0a", pore="#080808",
-        rough=(0.68, 0.92), polish=0.18, pores=dict(scale=40, size=0.1, cover=0.2),
+        blotch="#33322f", edge="#6a665f", cavity="#151413", pore="#0e0e0d",
+        rough=(0.68, 0.92), polish=0.18, pores=dict(scale=60, size=0.08, cover=0.15),
     ),
 }
 
@@ -174,10 +174,15 @@ def loft(prof0, prof1, a0, a1, axis="x", chip=False):
         q = (m + 1) % n
         bm.faces.new((a[m], b[m], b[q], a[q]))
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
-    if chip:
+    if chip:  # True: the two end rings; "long": the edges running along the axis; "all": both
         c = sum(pa + pb, Vector()) / (2 * n)
-        for ring in (pa, pb):
-            EDGES.extend((ring[m], ring[(m + 1) % n], c) for m in range(n))
+        if chip in (True, "all"):
+            for ring in (pa, pb):
+                EDGES.extend((ring[m], ring[(m + 1) % n], c) for m in range(n))
+        if chip in ("long", "all"):
+            for m in range(n):
+                mid = (pa[m] + pb[m]) / 2  # centre level with the edge, so chips face square out
+                EDGES.append((pa[m], pb[m], c + (mid - c).project(pb[m] - pa[m])))
     return from_bm("loft", bm)
 
 
@@ -340,6 +345,16 @@ def spool(x, z, side, r=0.05, t=0.045):
 def on_front(cells, cell, depth, cx, cz, y):
     """Relief cutter on a vertical face looking down -Y, centred at (cx, y, cz)."""
     return relief(cells, cell, depth, (cx, y, cz), (1, 0, 0), (0, 0, 1), (0, -1, 0))
+
+
+def on_back(cells, cell, depth, cx, cz, y):
+    """Same, on a face looking up +Y; reads the right way round from behind."""
+    return relief(cells, cell, depth, (cx, y, cz), (-1, 0, 0), (0, 0, 1), (0, 1, 0))
+
+
+def braid(w, h, pitch=3):
+    """Hair falling down the back of a head: vertical strands, w×h cells from (-w, 0)."""
+    return {(i, j) for i in range(-w, w) for j in range(h) if i % pitch == 0}
 
 
 def plinth(size=0.76, h=0.085):

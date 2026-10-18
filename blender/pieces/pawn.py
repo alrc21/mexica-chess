@@ -1,6 +1,6 @@
 """Macehualli — the pawn. A foot soldier in a quilted cotton cap, holding
 the round chimalli shield with its fringe of feathers. Front is -Y."""
-from kit import cylinder, disc_field, face, frustum, on_front, plinth, rbox
+from kit import braid, cylinder, disc_field, face, frustum, meander, on_back, on_front, plinth, rbox, relief
 
 TRIS = 10000
 
@@ -24,4 +24,8 @@ def build(seed=7):
     ring = disc_field(n, 3) - disc_field(n, 5)
     bar = {(i, j) for i, j in disc_field(n, 5) if -2 <= j < 1}
     cutters.append(on_front(ring | bar, r / n, 0.005, 0, z, -0.215))
+    cell, units = 0.0068, 5                                                  # mantle knot greca
+    cutters.append(relief(meander(units), cell, 0.0035, (units * 4 * cell, 0.162, 0.30),
+                          (-1, 0, 0), (0, 0, 1), (0, 1, 0)))
+    cutters.append(on_back(braid(10, 9), 0.01, 0.004, 0, 0.43, 0.12))
     return solids, cutters

@@ -27,14 +27,14 @@ export default function App() {
       <div className="pointer-events-none fixed inset-0 z-40 text-ink">
         <header className="absolute inset-x-0 top-0 flex items-start justify-between gap-6 px-5 pt-[max(1.25rem,env(safe-area-inset-top))] md:px-8">
           <span className="font-display text-[17px] tracking-[-0.01em]">Mexica Chess</span>
-          <span className="font-mono text-[11px] uppercase tracking-[0.12em] text-soft">Look development</span>
+          <span className="font-mono text-[11px] uppercase tracking-[0.12em] text-soft">Preview</span>
         </header>
 
         <footer className="absolute inset-x-0 bottom-0 flex items-end justify-between gap-6 px-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] md:px-8">
           <div>
-            <h1 className="font-display text-[40px] font-light leading-none tracking-[-0.02em] md:text-[56px]">Teocalli</h1>
+            <h1 className="font-display text-[40px] font-light leading-none tracking-[-0.02em] md:text-[56px]">Tenochtitlan</h1>
             <p className="mt-3 font-mono text-[11px] uppercase tracking-[0.12em] text-soft">
-              The rook · Templo Mayor · Tezontle and basalt
+              Tezontle against basalt · The plaza at night
             </p>
           </div>
           <span className="hidden text-[14px] text-soft md:block">Drag to turn</span>

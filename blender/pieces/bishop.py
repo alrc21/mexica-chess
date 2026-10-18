@@ -17,9 +17,9 @@ def build(seed=7):
     f_solids, f_cut = face(0, 0.715, -0.15, 0.28)
     solids += f_solids
     cutters += f_cut
-    solids.append(prism([(-0.15, 0.85), (-0.28, 0.815), (-0.31, 0.745), (-0.25, 0.76), (-0.15, 0.79)],
-                        -0.13, 0.13, chip=True))                            # upper beak, hooked
-    solids.append(prism([(-0.15, 0.635), (-0.235, 0.645), (-0.225, 0.615), (-0.15, 0.60)], -0.12, 0.12))  # lower beak
+    solids.append(prism([(-0.15, 0.85), (-0.27, 0.82), (-0.32, 0.75), (-0.29, 0.722), (-0.15, 0.79)],
+                        -0.10, 0.10, chip=True))                            # upper beak, hooked
+    solids.append(prism([(-0.15, 0.635), (-0.235, 0.645), (-0.225, 0.615), (-0.15, 0.60)], -0.09, 0.09))  # lower beak
     for x, h in ((-0.10, 0.0), (-0.05, 0.03), (0.0, 0.05), (0.05, 0.03), (0.10, 0.0)):  # crest
         solids.append(prism([(0.0, 0.83), (0.10, 0.83), (0.27, 0.93 + h), (0.18, 0.93 + h)], x - 0.019, x + 0.019))
     ring = {c for c in disc_field(8, 0) if _r(*c) > 4.5}                    # eagle eyes on the hood
@@ -28,4 +28,6 @@ def build(seed=7):
                               (0, -side, 0), (0, 0, 1), (side, 0, 0)))
     cell = 0.0105
     cutters.append(relief(chevrons(15, 24), cell, 0.005, (0, -0.19, 0.345), (1, 0, 0), (0, 0, 1), (0, -1, 0)))
+    cutters.append(relief(chevrons(15, 24), cell, 0.005, (0, 0.19, 0.345), (-1, 0, 0), (0, 0, 1), (0, 1, 0)))
+    cutters.append(relief(chevrons(18, 10, 4), 0.009, 0.004, (0, 0.20, 0.10), (-1, 0, 0), (0, 0, 1), (0, 1, 0)))  # tail feathers
     return solids, cutters

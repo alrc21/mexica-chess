@@ -27,19 +27,25 @@ Each phase ends with before/after screenshots in `docs/evidence/`.
 - [x] **0. Vertical slice: the rook.** Blender → GLB → browser with the
   final look and chrome. Built in 85 s; 0.84–0.96 MB per piece.
   `docs/evidence/phase0-*`.
-- [ ] **1. The board.** 64 carved slabs with mortar joints. The grecas are a
-  baked relief, not drawn lines. Light squares in a pale stone so both sides
-  read on top of them.
-- [ ] **2. The other five pieces, both sides.** King (stele crowned with the
-  xiuhuitzolli), queen, bishop (Cuauhtli), knight (Ocelotl), pawn. Each must
-  have a silhouette that still reads from the playing camera.
+- [x] **1. The board.** 64 slabs in three carved variants, dealt with
+  random turns: pale cantera for the light squares, grey andesite for the
+  dark ones, with mortar joints and hairline cracks. The kerb is basalt with
+  a running greca, and an Ollin block sits at each corner.
+- [x] **2. The other five pieces, both sides.** King (quetzal fan,
+  xiuhuitzolli, speech scroll), queen (quechquemitl, hair tufts, Ollin sun
+  disk), bishop (eagle warrior, face in the beak), knight (jaguar warrior,
+  face in the jaws), pawn (chimalli with its feather fringe). The backs are
+  carved too, so the player's own army reads from behind.
+- [x] **Pulled forward from 4: the night plaza.** Scanned flagstones running
+  off into fog, four monumental basalt braziers with shader fire (flame
+  tongues, embers, a breathing point light) and bloom that only catches the
+  fire.
 - [ ] **3. The game.** chess.js rules, Stockfish with difficulty levels,
   moves in an arc, capture as stone breaking apart, promotion, undo,
-  touch input. Works on mobile.
-- [ ] **4. Scene and polish.** The plaza at night, the Templo Mayor on the
-  horizon, brazier fire, stone-on-stone foley (CC0, not synthesised).
-  KTX2 textures (required: 12 sets at 2K are about 800 MB of VRAM
-  uncompressed), a performance budget, deployment.
+  touch input. Works on mobile. Hovering a piece names it.
+- [ ] **4. Polish.** The Templo Mayor on the horizon, stone-on-stone foley
+  (CC0, not synthesised), KTX2 textures, LODs for the pawns, a performance
+  pass on mobile, deployment.
 
 ## Budgets
 
@@ -58,7 +64,7 @@ Each phase ends with before/after screenshots in `docs/evidence/`.
 
 ```sh
 python3 blender/fetch.py        # CC0 scans, once
-npm run piece -- rook           # Blender bake → public/models
+npm run piece -- rook           # Blender bake → public/models (SHIP_ONLY=1 skips the bake)
 npm run dev                     # http://localhost:3100
 node scripts/shoot.mjs <dir> http://localhost:3100 /   # desktop + mobile shots
 ```
