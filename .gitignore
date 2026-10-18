@@ -4,3 +4,4 @@ blender/assets
 blender/out
 *.blend1
 .DS_Store
+__pycache__
