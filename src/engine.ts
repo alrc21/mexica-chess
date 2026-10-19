@@ -15,9 +15,12 @@ export type Engine = ReturnType<typeof createEngine>;
 export function createEngine() {
   const worker = new Worker('/engine/stockfish-19-lite-single.js');
   let waiting: ((uci: string) => void) | null = null;
+  let stale = 0; // stopped searches still owe a bestmove; it must not answer the next one
   worker.onmessage = e => {
     const line = String(e.data);
-    if (line.startsWith('bestmove') && waiting) {
+    if (!line.startsWith('bestmove')) return;
+    if (stale) { stale--; return; }
+    if (waiting) {
       const done = waiting;
       waiting = null;
       done(line.split(' ')[1]);
@@ -34,7 +37,12 @@ export function createEngine() {
       worker.postMessage(L.go);
       return new Promise(resolve => { waiting = resolve; });
     },
-    stop() { worker.postMessage('stop'); },
+    stop() {
+      if (!waiting) return;
+      waiting = null;
+      stale++;
+      worker.postMessage('stop');
+    },
     newGame() { worker.postMessage('ucinewgame'); worker.postMessage('isready'); },
     dispose() { worker.terminate(); },
   };

@@ -19,6 +19,9 @@ export function advance(dt: number) {
   }
 }
 
+/** True while any tween is running. */
+export const animating = () => jobs.length > 0;
+
 export const easeInOut = (k: number) => (k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2);
 export const easeOutBack = (k: number) => 1 + 2.4 * Math.pow(k - 1, 3) + 1.4 * Math.pow(k - 1, 2);
 export const wait = (ms: number) => new Promise(r => setTimeout(r, ms));

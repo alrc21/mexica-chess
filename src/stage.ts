@@ -7,8 +7,8 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import type { Color, PieceSymbol, Square } from 'chess.js';
-import { advance, easeInOut, tween } from './anim';
-import { createBoard, type Board, type Models } from './board';
+import { advance, animating, easeInOut, tween } from './anim';
+import { createBoard, squarePos, type Board, type Hit, type Models } from './board';
 import { createFire, type Fire } from './fire';
 import { MODEL, STONE } from './lore';
 
@@ -116,21 +116,26 @@ export type Stage = {
   /** Back to the slow drift in front of the Templo Mayor. */
   toIntro(): Promise<void>;
   setCursor(pointer: boolean): void;
+  /** Where a square's centre lands on screen, in CSS pixels (used by the browser tests). */
+  project(sq: Square, height?: number): { x: number; y: number };
 };
 
 export type StageEvents = {
   onReady(stage: Stage): void;
-  onSquare(sq: Square): void;
-  onHover(sq: Square | null): void;
+  onSquare(hit: Hit): void;
+  onHover(hit: Hit): void;
 };
 
 export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  // Retina pixels are small enough to hide jaggies; low-density screens get MSAA instead.
+  let dpr = Math.min(window.devicePixelRatio, 2);
+  renderer.setPixelRatio(dpr);
   renderer.toneMapping = THREE.ACESFilmicToneMapping; // more bite than AgX: deep blacks, saturated oxide red
   renderer.toneMappingExposure = 1.22;
   renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.shadowMap.type = THREE.PCFShadowMap; // r186 folded PCFSoft into PCF + radius
+  renderer.shadowMap.autoUpdate = false; // re-rendered only while stone moves
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(HORIZON);
@@ -293,6 +298,13 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
       mode = 'intro';
     },
     setCursor(pointer) { canvas.style.cursor = pointer ? 'pointer' : ''; },
+    project(sq, height = 0) {
+      const p = squarePos(sq);
+      p.y += height;
+      p.project(camera);
+      const r = canvas.getBoundingClientRect();
+      return { x: r.left + (p.x + 1) / 2 * r.width, y: r.top + (1 - p.y) / 2 * r.height };
+    },
   };
 
   (async () => {
@@ -339,12 +351,18 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
     const models = { w: {}, b: {} } as Models;
     (['w', 'b'] as Color[]).forEach((c, i) => kinds.forEach((k, j) => { models[c][k] = pieces[i][j]; }));
     board = createBoard(scene, models);
+    // Compile every shader now, behind the curtain, not on the first click.
+    const warm = board.warmup();
+    scene.add(...warm);
     renderer.compile(scene, camera);
+    scene.remove(...warm);
+    renderer.shadowMap.needsUpdate = true;
     events.onReady(stage);
   })();
 
   // ── Post: bloom only catches what burns ───────────────────────────────────
-  const composer = new EffectComposer(renderer);
+  // The composer's own target has no MSAA; give it one on low-density screens.
+  const composer = new EffectComposer(renderer, new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: dpr < 1.5 ? 4 : 0 }));
   composer.addPass(new RenderPass(scene, camera));
   composer.addPass(new UnrealBloomPass(new THREE.Vector2(1, 1), 0.42, 0.3, 1.0));
   composer.addPass(new OutputPass());
@@ -352,7 +370,7 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
   // ── Pointer: a click is a press that didn't become a drag ─────────────────
   const ndc = new THREE.Vector2();
   let down: { x: number; y: number } | null = null;
-  let hovered: Square | null = null;
+  let hovered = '';
   const toNdc = (e: PointerEvent) => {
     const r = canvas.getBoundingClientRect();
     ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
@@ -364,18 +382,20 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
     down = null;
     if (moved > 6) return;
     toNdc(e);
-    const sq = board.pick(ndc, camera);
-    if (sq) events.onSquare(sq);
+    events.onSquare(board.pick(ndc, camera));
   };
+  // Hover picks once per frame at most, however fast the trackpad reports.
+  let hoverDirty = false;
   const onMove = (e: PointerEvent) => {
-    if (mode !== 'game' || !board || e.pointerType !== 'mouse') return;
+    if (e.pointerType !== 'mouse') return;
     toNdc(e);
-    const sq = board.pick(ndc, camera);
-    if (sq !== hovered) { hovered = sq; events.onHover(sq); }
+    hoverDirty = true;
   };
+  const onLeave = () => { hovered = ''; events.onHover({ piece: null, ground: null }); };
   canvas.addEventListener('pointerdown', onDown);
   canvas.addEventListener('pointerup', onUp);
   canvas.addEventListener('pointermove', onMove);
+  canvas.addEventListener('pointerleave', onLeave);
 
   const resize = () => {
     const { clientWidth: w, clientHeight: h } = canvas;
@@ -404,12 +424,36 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
     controls.enabled = true;
   }
 
-  const clock = new THREE.Clock();
+  // Adaptive resolution: a machine that can't hold ~45 fps renders fewer pixels.
+  let slow = 1 / 60;
+  let sampled = -3; // let the first seconds after loading (shader compiles, texture uploads) pass
+  const adapt = (raw: number) => {
+    slow = slow * 0.95 + raw * 0.05;
+    if ((sampled += raw) < 2.5) return;
+    sampled = 0;
+    if (slow > 1 / 45 && dpr > 1) {
+      dpr = Math.max(1, dpr - 0.25);
+      renderer.setPixelRatio(dpr);
+      resize();
+    }
+  };
+
+  const timer = new THREE.Timer();
   renderer.setAnimationLoop(() => {
-    const dt = Math.min(clock.getDelta(), 1 / 20);
-    const t = clock.elapsedTime;
+    timer.update();
+    const raw = timer.getDelta();
+    if (board && !document.hidden) adapt(Math.min(raw, 0.1));
+    const dt = Math.min(raw, 1 / 20);
+    const t = timer.getElapsed();
     advance(dt);
-    board?.update(dt);
+    const moving = board?.update(dt);
+    if (moving || animating()) renderer.shadowMap.needsUpdate = true;
+    if (hoverDirty && mode === 'game' && board) {
+      hoverDirty = false;
+      const hit = board.pick(ndc, camera);
+      const key = `${hit.piece}${hit.ground}`;
+      if (key !== hovered) { hovered = key; events.onHover(hit); }
+    }
     if (mode === 'intro') {
       // A breath of movement: the camera sways and creeps toward the pyramid.
       const v = INTRO();
@@ -427,6 +471,7 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
     canvas.removeEventListener('pointerdown', onDown);
     canvas.removeEventListener('pointerup', onUp);
     canvas.removeEventListener('pointermove', onMove);
+    canvas.removeEventListener('pointerleave', onLeave);
     ro.disconnect();
     controls.dispose();
     composer.dispose();

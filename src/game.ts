@@ -2,6 +2,7 @@ import { Chess, type Color, type Move, type PieceSymbol, type Square } from 'che
 import { wait } from './anim';
 import type { Engine, Level } from './engine';
 import { LORE, SIDE } from './lore';
+import type { Hit } from './board';
 import type { Stage } from './stage';
 
 export type Settings = { side: Color; mode: 'machine' | 'friend'; level: Level };
@@ -34,9 +35,13 @@ export function createGame(stage: Stage, engine: Engine, emit: (v: View) => void
   let targets: Move[] = [];
   let promoting: { from: Square; to: Square } | null = null;
   let hover: View['hover'] = null;
+  let queued: Square | null = null; // a target clicked mid-animation, played when it lands
   let generation = 0; // bumps on undo/new game so a late engine reply is ignored
 
   const machineTurn = () => settings.mode === 'machine' && chess.turn() !== settings.side;
+  // Whose pieces the player may pick up: their own army, even while the machine thinks.
+  const mine = () => (settings.mode === 'machine' ? settings.side : chess.turn());
+  const canMove = () => phase === 'playing' && !busy && !thinking && !promoting && !machineTurn();
 
   function result(): View['result'] {
     if (chess.isCheckmate()) {
@@ -98,24 +103,44 @@ export function createGame(stage: Stage, engine: Engine, emit: (v: View) => void
   }
 
   function deselect() {
+    queued = null;
     selected = null;
     targets = [];
     stage.board.lift(null);
   }
 
-  async function apply(m: { from: string; to: string; promotion?: string }) {
+  /**
+   * A lifted or tall piece hides the squares behind it, so a legal target on
+   * the ground beats the stone in front of it — unless that stone is a capture.
+   */
+  const isTarget = (sq: Square | null) => !!sq && targets.some(m => m.to === sq);
+  const resolve = (h: Hit) => (isTarget(h.ground) && !isTarget(h.piece) ? h.ground : h.piece ?? h.ground);
+
+  /** After the other side moves, a piece the player had picked up shows its moves again. */
+  function reselect() {
+    if (!selected) return;
+    const p = chess.get(selected);
+    if (!p || p.color !== mine()) deselect();
+    else targets = chess.moves({ square: selected, verbose: true });
+  }
+
+  async function apply(m: { from: string; to: string; promotion?: string }, byMachine = false) {
+    let move: Move;
+    try { move = chess.move(m); } catch {
+      console.error('illegal move', m, chess.fen());
+      return;
+    }
     busy = true;
-    selected = null;
-    targets = [];
-    const move = chess.move(m);
-    stage.board.highlight({});
+    if (!byMachine) { selected = null; targets = []; } else targets = [];
+    stage.board.highlight({ selected });
     publish();
     await stage.board.play(move);
     busy = false;
+    if (chess.isGameOver()) { phase = 'over'; deselect(); } else reselect();
     marks();
-    if (chess.isGameOver()) phase = 'over';
     publish();
     if (phase === 'playing' && machineTurn()) machine();
+    else if (queued) { const q = queued; queued = null; game.square(q); }
   }
 
   async function machine() {
@@ -125,10 +150,10 @@ export function createGame(stage: Stage, engine: Engine, emit: (v: View) => void
     const [uci] = await Promise.all([engine.best(chess.fen(), settings.level), wait(500)]);
     if (g !== generation || phase !== 'playing') return;
     thinking = false;
-    await apply({ from: uci.slice(0, 2), to: uci.slice(2, 4), promotion: uci[4] });
+    await apply({ from: uci.slice(0, 2), to: uci.slice(2, 4), promotion: uci[4] }, true);
   }
 
-  return {
+  const game = {
     async start(s: Settings) {
       settings = s;
       generation++;
@@ -150,10 +175,16 @@ export function createGame(stage: Stage, engine: Engine, emit: (v: View) => void
       if (machineTurn()) machine();
     },
 
+    click(h: Hit) {
+      const sq = resolve(h);
+      if (sq) game.square(sq);
+    },
+
     square(sq: Square) {
-      if (phase !== 'playing' || busy || thinking || promoting || machineTurn()) return;
+      if (phase !== 'playing' || promoting) return;
       const options = targets.filter(m => m.to === sq);
-      if (selected && options.length) {
+      if (selected && options.length && busy) { queued = sq; return; } // clicked while stone was still moving
+      if (selected && options.length && canMove()) {
         if (options.some(m => m.promotion)) {
           promoting = { from: selected, to: sq };
           publish();
@@ -163,8 +194,9 @@ export function createGame(stage: Stage, engine: Engine, emit: (v: View) => void
         return;
       }
       const piece = chess.get(sq);
-      if (piece && piece.color === chess.turn() && sq !== selected) {
+      if (piece && piece.color === mine() && sq !== selected) {
         selected = sq;
+        // chess.js only lists moves for the side to move: during the machine's turn this is empty.
         targets = chess.moves({ square: sq, verbose: true });
         stage.board.lift(sq);
       } else deselect();
@@ -185,13 +217,15 @@ export function createGame(stage: Stage, engine: Engine, emit: (v: View) => void
       publish();
     },
 
-    hover(sq: Square | null) {
+    hover(h: Hit) {
+      const sq = resolve(h);
       const p = sq ? chess.get(sq) : undefined;
+      const target = isTarget(sq);
+      stage.board.hoverTile(target ? sq : null);
+      stage.setCursor(phase === 'playing' && (target || p?.color === mine()));
       const next = p ? { ...LORE[p.type], side: SIDE[p.color] } : null;
       if (next?.name === hover?.name && next?.side === hover?.side) return;
       hover = next;
-      const mine = p && p.color === chess.turn() && !machineTurn();
-      stage.setCursor(phase === 'playing' && (!!mine || targets.some(m => m.to === sq)));
       publish();
     },
 
@@ -228,6 +262,7 @@ export function createGame(stage: Stage, engine: Engine, emit: (v: View) => void
 
     view: () => publish(),
   };
+  return game;
 }
 
 export type Game = ReturnType<typeof createGame>;

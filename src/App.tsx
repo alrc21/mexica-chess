@@ -35,10 +35,10 @@ export default function App() {
       onReady: stage => {
         game.current = createGame(stage, engine, setView);
         game.current.view();
-        if (import.meta.env.DEV) (window as unknown as { __game: Game }).__game = game.current;
+        if (import.meta.env.DEV) Object.assign(window, { __game: game.current, __stage: stage });
       },
-      onSquare: sq => game.current?.square(sq),
-      onHover: sq => game.current?.hover(sq),
+      onSquare: hit => game.current?.click(hit),
+      onHover: hit => game.current?.hover(hit),
     });
     return () => { dispose(); engine.dispose(); };
   }, []);
