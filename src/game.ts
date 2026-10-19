@@ -176,7 +176,8 @@ export function createGame(stage: Stage, engine: Engine, emit: (v: View) => void
       stage.board.setBoard(chess.board());
       stage.board.highlight({});
       publish();
-      stage.audio.play('conch', { gain: 0.5 });
+      // Play may be the very first gesture: the conch waits for the sounds to arrive.
+      stage.audio.loaded?.then(() => stage.audio.play('conch', { gain: 0.5 }));
       await stage.toGame(s.side);
       busy = false;
       marks();

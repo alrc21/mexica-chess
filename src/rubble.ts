@@ -310,7 +310,8 @@ export function createRubble(scene: THREE.Scene, sfx: Sfx) {
     setDustColor(c: THREE.ColorRepresentation) { (dust.material.uniforms.uColor.value as THREE.Color).set(c); },
     /** Particle sizes are world units: this is drawing-buffer height / (2·tan(fov/2)). */
     setScale(k: number) { dust.material.uniforms.uScale.value = sparks.material.uniforms.uScale.value = k; },
-    warmup(): THREE.Object3D[] { return [dust.points, sparks.points]; },
+    // The pools live in the scene from the start, so the warm-up compile already sees them.
+    warmup(): THREE.Object3D[] { return []; },
     /** Advances everything; true while anything is still moving. */
     update(dt: number, obstacles: Obstacle[]) {
       let busy = dust.update(dt);
