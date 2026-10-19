@@ -69,7 +69,19 @@ Each phase ends with before/after screenshots in `docs/evidence/`.
   sky, haze, Popocatépetl and Iztaccíhuatl on the skyline, the UI flips to
   ink). Walk the board at a person's eye height: drag to look, WASD or tap
   the ground, pieces and braziers are solid, and you can play from there.
-- [ ] **5. Ship.** KTX2 textures, LODs for the pawns, a real-iPhone pass,
+- [x] **5a. Sharp and scarred.** The blur was adaptive resolution dropping
+  during a capture and never coming back: it now judges quiet frames only and
+  recovers. Path tiles redrawn as an even wash with hairline corner brackets.
+  A slab where a piece is destroyed is swapped for a broken one (cracked,
+  then shattered — `blender/damage.py`); chunks crumble to dust and the grit
+  stays; Undo heals both. Golden-hour day; cut-flagstone plaza.
+- [x] **5b. Two places.** Tenochtitlan's precinct (shrines, the round temple
+  of Ehecatl, altars, the coatepantli — `blender/pieces/`) around the plaza.
+  Calakmul: the board on a Maya summit above a rain forest drawn per pixel
+  (two layers of crowns in relief near, painted far), mist, temples breaking
+  through the trees, a moon by night; jungle, howlers and wind in the sound.
+- [ ] **6. Ship.** KTX2 textures (`scripts/ktx2.mjs` is ready), the Maya
+  temples modelled in Blender instead of blocks, a real-iPhone pass,
   deployment.
 
 ## Budgets
@@ -79,6 +91,8 @@ Each phase ends with before/after screenshots in `docs/evidence/`.
 - Frame: 60 fps on an M-series laptop, 30+ fps on a recent iPhone.
   Measured 2026-10-19, headless Chrome on Apple Silicon, 1440×900 @2x,
   vsync off: intro 112, game 83, on foot 113, on foot by day 115.
+  2026-10-20, same rig, both places: intro 101, game 81, on foot 110–112,
+  Calakmul game 75–77.
 - Fractured pieces: 4.1 MB, loaded after the first frame.
 - Sound: 1.7 MB, loaded on the first gesture.
 
@@ -99,6 +113,8 @@ node scripts/shoot.mjs <dir> http://localhost:3100 /   # desktop + mobile shots
 node scripts/click.mjs <dir>    # real clicks on projected squares (picking)
 node scripts/drama.mjs <dir>    # capture + mate, shot as a strip
 node scripts/views.mjs <dir>    # intro/board by day, on foot by day and night
-node scripts/fps.mjs            # uncapped fps: intro, game, on foot, day
+node scripts/fps.mjs            # uncapped fps: intro, game, on foot, day, Calakmul
+node scripts/places.mjs <dir>   # both places, both hours: intro, board, on foot
+node scripts/tiles.mjs <png>    # the tile close-up Alberto sent, at retina scale
 blender -b --factory-startup -P blender/fracture.py -- king   # pre-fracture a piece
 ```

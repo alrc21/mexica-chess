@@ -77,9 +77,10 @@ const emberMaterial = () => new THREE.ShaderMaterial({
 });
 
 /** `glow` scales the light it throws, `flame` the flames themselves (both lower by day). */
-export type Fire = { group: THREE.Group; light: THREE.PointLight; update: (t: number, camera: THREE.Camera, glow?: number, flame?: number) => void };
+export type Fire = { group: THREE.Group; light: THREE.PointLight | null; update: (t: number, camera: THREE.Camera, glow?: number, flame?: number) => void };
 
-export function createFire(seed: number, size = 1): Fire {
+/** `lit`: distant fires are flames and embers only — every point light costs every stone pixel. */
+export function createFire(seed: number, size = 1, lit = true): Fire {
   const group = new THREE.Group();
   // A bed of flames across the bowl: one tall tongue, two lower ones either side.
   const billboard = new THREE.Group();
@@ -111,9 +112,11 @@ export function createFire(seed: number, size = 1): Fire {
   embers.frustumCulled = false;
   group.add(embers);
 
-  const light = new THREE.PointLight('#ff8636', 0, 0, 2);
-  light.position.y = 0.7 * size;
-  group.add(light);
+  const light = lit ? new THREE.PointLight('#ff8636', 0, 0, 2) : null;
+  if (light) {
+    light.position.y = 0.7 * size;
+    group.add(light);
+  }
 
   const world = new THREE.Vector3();
   return {
@@ -129,7 +132,7 @@ export function createFire(seed: number, size = 1): Fire {
       }
       embers.material.uniforms.uTime.value = t + seed * 3;
       // Breathing, not strobing: two slow sines and a faster flutter.
-      light.intensity = 40 * glow * (0.82 + 0.1 * Math.sin(t * 2.3 + seed) + 0.06 * Math.sin(t * 7.1 + seed * 2) + 0.04 * Math.sin(t * 13.7));
+      if (light) light.intensity = 40 * glow * (0.82 + 0.1 * Math.sin(t * 2.3 + seed) + 0.06 * Math.sin(t * 7.1 + seed * 2) + 0.04 * Math.sin(t * 13.7));
     },
   };
 }

@@ -5,12 +5,18 @@ import { createGame, type Game, type Settings, type View } from './game';
 import { LORE } from './lore';
 import Segmented from './Segmented';
 import { createStage, type Stage } from './stage';
+import type { Place } from './atmosphere';
 
 const EASE = 'cubic-bezier(.16,1,.3,1)';
 const SIDES = ['w', 'b'] as const;
 const MODES = ['machine', 'friend'] as const;
 const LEVELS: Level[] = ['easy', 'medium', 'hard'];
 const CROWNS: PieceSymbol[] = ['q', 'r', 'b', 'n'];
+const PLACES: Place[] = ['tenochtitlan', 'calakmul'];
+const WHERE: Record<Place, { label: string; line: string }> = {
+  tenochtitlan: { label: 'Templo Mayor, Tenochtitlan', line: 'on the plaza of Tenochtitlan.' },
+  calakmul: { label: 'Calakmul, Campeche', line: 'on a temple above the forest of Calakmul.' },
+};
 const TOUCH = typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches;
 
 const fade = (on: boolean, ms = 900): CSSProperties => ({
@@ -36,6 +42,8 @@ export default function App() {
   const [moving, setMoving] = useState(false); // a camera change is under way
   const [muted, setMuted] = useState(false);
   const [hint, setHint] = useState(false);
+  const [place, setPlace] = useState<Place>('tenochtitlan');
+  const [veiled, setVeiled] = useState(false); // a short curtain while the place changes
 
   useEffect(() => {
     const engine = createEngine();
@@ -78,6 +86,13 @@ export default function App() {
     setHint(on);
     if (on) setTimeout(() => setHint(false), 7000);
   };
+  // The place swaps behind a brief curtain: you close your eyes in one city and open them in the other.
+  const changePlace = (p: Place) => {
+    if (p === place || veiled) return;
+    setPlace(p);
+    setVeiled(true);
+    setTimeout(() => { stage.current?.setPlace(p); setTimeout(() => setVeiled(false), 120); }, 650);
+  };
   const leave = () => { setWalking(false); setHint(false); g?.toIntro(); };
   const again = () => { setWalking(false); setHint(false); g?.start(view!.settings); };
   const mute = () => {
@@ -105,7 +120,7 @@ export default function App() {
 
       {/* Curtain: lifts once the stone has loaded and compiled. */}
       <div aria-hidden className="pointer-events-none fixed inset-0 z-50 bg-[#0b0a08]"
-        style={{ opacity: view ? 0 : 1, transition: `opacity 1600ms ${EASE}` }} />
+        style={{ opacity: view && !veiled ? 0 : 1, transition: `opacity ${veiled ? 600 : 1600}ms ${EASE}` }} />
 
       <div className="pointer-events-none fixed inset-0 z-40 text-ink">
         <header className="absolute inset-x-0 top-0 flex items-start justify-between gap-6 px-5 pt-[max(1.25rem,env(safe-area-inset-top))] md:px-8">
@@ -114,7 +129,7 @@ export default function App() {
             Mexica Chess
           </button>
           <span className="font-mono text-[11px] uppercase tracking-[0.12em] text-soft" style={fade(intro)}>
-            Templo Mayor, Tenochtitlan
+            {WHERE[place].label}
           </span>
           <nav className="absolute right-5 top-[max(1.25rem,env(safe-area-inset-top))] flex gap-5 text-[14px] md:right-8 md:gap-7" style={fade(!!playing)}>
             <button type="button" onClick={() => g?.undo()} disabled={!view?.canUndo}
@@ -134,7 +149,7 @@ export default function App() {
           <h1 className="font-display text-[52px] font-light leading-[0.95] tracking-[-0.03em] md:text-[92px]"
             style={{ textShadow: `0 2px 40px rgba(${veil},0.85)` }}>Mexica Chess</h1>
           <p className="mt-4 max-w-[36ch] text-[16px] leading-[1.5] text-soft md:text-[17px]">
-            Chess carved in volcanic stone. Red tezontle against black basalt, on the plaza of Tenochtitlan.
+            Chess carved in volcanic stone. Red tezontle against black basalt, {WHERE[place].line}
           </p>
           <div className="mt-7 flex flex-col gap-2.5">
             <Segmented label="You play" labelWidth="5.5rem" tone={tone} options={['Tezontle', 'Basalt']}
@@ -145,6 +160,8 @@ export default function App() {
               <Segmented label="Level" labelWidth="5.5rem" tone={tone} options={['Easy', 'Medium', 'Hard']}
                 index={LEVELS.indexOf(settings.level)} onSelect={i => setSettings(s => ({ ...s, level: LEVELS[i] }))} />
             </div>
+            <Segmented label="Place" labelWidth="5.5rem" tone={tone} options={['Tenochtitlan', 'Calakmul']}
+              index={PLACES.indexOf(place)} onSelect={i => changePlace(PLACES[i])} />
             <Segmented label="Hour" labelWidth="5.5rem" tone={tone} options={['Night', 'Day']}
               index={day ? 1 : 0} onSelect={i => changeHour(i === 1)} />
           </div>

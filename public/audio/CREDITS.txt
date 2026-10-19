@@ -92,3 +92,34 @@ night-loop.mp3             "AMBIENCE NIGHT FIELD CRICKET 01.wav" by sengjinn
 day-loop.mp3               "Quiet Day at Countryside" by joenmuri — birds, insects, light wind
                            https://freesound.org/people/joenmuri/sounds/586438/
                            3–35 s → 30 s loop, 2 s crossfade.
+
+Second pass (2026-10-20) — same processing rules as above
+--------------------------------------------------------
+
+Jungle and summit (loops)
+jungle-day-loop.mp3        "Amazon Jungle in the Morning at Rainforest Tambopata National Reserve"
+                           by alberto_cendra_woodman — birds, insects, distant monkeys
+                           https://freesound.org/people/alberto_cendra_woodman/sounds/737513/
+                           140–176 s → 34 s loop, 2 s crossfade; -23.3 LUFS.
+jungle-night-loop.mp3      "Howler Monkeys at El Tintal" by pulseczar42 — recorded at night atop
+                           a Maya ruin at El Tintal, Petén Basin: insects and howler bouts
+                           https://freesound.org/people/pulseczar42/sounds/866412/
+                           706–742 s → 34 s loop, 2 s crossfade; -23.4 LUFS.
+wind-loop.mp3              "Tramontane Wind on Top of the Canigou Mountain (French Pyrenees)"
+                           by davidlagarde — wind between big stones on a summit
+                           https://freesound.org/people/davidlagarde/sounds/759918/
+                           14–42 s → 26 s loop, 2 s crossfade; -24.0 LUFS (true-peak bound).
+
+Stone crumbling and slabs breaking (one-shots)
+dust-1.mp3                 "Gravel Pouring.wav" by cartoonrob
+                           https://freesound.org/people/cartoonrob/sounds/588467/
+                           whole file, 0.25 s fade-out.
+dust-2.mp3                 "Rocks.wav" by adamgryu — rocks crumbling
+                           https://freesound.org/people/adamgryu/sounds/336023/
+                           0.3–2.2 s, 0.6 s fade-out.
+slab-1.mp3                 "VSH-38-pop-concrete wall-med.wav" by newagesoup — a dry concrete pop/crack
+                           https://freesound.org/people/newagesoup/sounds/369138/
+                           whole file.
+slab-2.mp3                 "stone falls and breaks low pitch.aiff" by SoundCollectah
+                           https://freesound.org/people/SoundCollectah/sounds/109360/
+                           0–1.2 s, 0.35 s fade-out.

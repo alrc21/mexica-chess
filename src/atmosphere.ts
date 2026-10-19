@@ -23,13 +23,17 @@ function dome() {
         uSun: { value: new THREE.Vector3(10, 5.6, 7).normalize() },
         uNightHorizon: { value: NIGHT_HORIZON.clone() },
         uDayHorizon: { value: DAY_HORIZON.clone() },
+        uNightZenith: { value: new THREE.Color(0.006, 0.006, 0.007) },
+        uSkyline: { value: 1 },
+        uMoon: { value: new THREE.Vector3(-0.35, 0.55, -0.76).normalize() },
+        uMoonOn: { value: 0 },
       },
       vertexShader: /* glsl */ `
         varying vec3 vDir;
         void main() { vDir = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
       fragmentShader: /* glsl */ `
-        uniform float uDay;
-        uniform vec3 uSun, uNightHorizon, uDayHorizon;
+        uniform float uDay, uSkyline, uMoonOn;
+        uniform vec3 uSun, uNightHorizon, uDayHorizon, uNightZenith, uMoon;
         varying vec3 vDir;
         float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
         float noise(float x) { float i = floor(x), f = fract(x); return mix(hash(vec2(i, 1.7)), hash(vec2(i + 1.0, 1.7)), f * f * (3.0 - 2.0 * f)); }
@@ -46,7 +50,7 @@ function dome() {
           vec3 d = normalize(vDir);
           float a = atan(d.x, -d.z);
           // Night: warm haze at the horizon going black overhead, faint stars.
-          vec3 night = mix(uNightHorizon, vec3(0.006, 0.006, 0.007), smoothstep(-0.02, 0.45, d.y));
+          vec3 night = mix(uNightHorizon, uNightZenith, smoothstep(-0.02, 0.45, d.y));
           vec2 g = vec2(a * 140.0, d.y * 140.0);
           vec2 cell = floor(g);
           vec2 at = vec2(hash(cell), hash(cell + 7.3));
@@ -57,9 +61,12 @@ function dome() {
           day = mix(day, vec3(1.0, 0.72, 0.42), pow(max(dot(normalize(vec3(d.x, 0.0, d.z)), normalize(vec3(uSun.x, 0.0, uSun.z))), 0.0), 3.0) * (1.0 - smoothstep(0.0, 0.35, d.y)) * 0.45);
           float s = max(dot(d, uSun), 0.0);
           day += vec3(1.0, 0.82, 0.58) * (pow(s, 6.0) * 0.22 + pow(s, 900.0) * 30.0);
+          // The moon over the forest: a small hard disc and a wide pale halo.
+          float mo = max(dot(d, uMoon), 0.0);
+          night += uMoonOn * (vec3(0.9, 0.93, 1.0) * smoothstep(0.99955, 0.9997, mo) * 3.0 + vec3(0.12, 0.16, 0.24) * pow(mo, 24.0) * 0.6);
           vec3 c = mix(night, day, uDay);
           // The volcanoes: blue with distance by day, a shade above the sky by night, snow on the high ground.
-          float h = skyline(a);
+          float h = skyline(a) * uSkyline - (1.0 - uSkyline) * 0.05;
           if (d.y < h && d.y > -0.05) {
             float up = (d.y + 0.01) / max(h, 0.001);
             vec3 rock = mix(mix(uDayHorizon, vec3(0.27, 0.31, 0.4), 0.72), uDayHorizon, 0.3 * (1.0 - up));
@@ -102,6 +109,20 @@ function lightformers(day: boolean) {
   }
   return env;
 }
+
+/** What changes between the two places; the hour blends within each. */
+export type Place = 'tenochtitlan' | 'calakmul';
+const PLACES = {
+  tenochtitlan: {
+    skyline: 1, moon: 0, nightHorizon: '#100d0b', nightZenith: '#020202', dayHorizon: '#e3c9a0', moonlight: 0, flood: 1,
+    fog: { night: [16, 72], day: [45, 210] },
+  },
+  // Humid air: a paler, cooler haze by day; by night a deep blue sky, a moon, and its light on the trees.
+  calakmul: {
+    skyline: 0, moon: 1, nightHorizon: '#141c28', nightZenith: '#02040a', dayHorizon: '#c3cfd2', moonlight: 0.75, flood: 0,
+    fog: { night: [30, 420], day: [130, 900] },
+  },
+} as const;
 
 export function createAtmosphere(scene: THREE.Scene, renderer: THREE.WebGLRenderer, monumentZ: number) {
   const sky = dome();
@@ -148,6 +169,13 @@ export function createAtmosphere(scene: THREE.Scene, renderer: THREE.WebGLRender
   key.shadow.needsUpdate = sun.shadow.needsUpdate = true;
 
   const mix = (a: number, b: number, k: number) => a + (b - a) * k;
+  let place: Place = 'tenochtitlan';
+  const nightHorizon = NIGHT_HORIZON.clone();
+  const dayHorizon = DAY_HORIZON.clone();
+  const SUN = new THREE.Color('#ffdcb0');
+  const MOON = new THREE.Color('#9fb6dc');
+  const SUN_AT = new THREE.Vector3(10, 5.6, 7);
+  const MOON_AT = (sky.material as THREE.ShaderMaterial).uniforms.uMoon.value.clone().multiplyScalar(16); // light comes from the moon you see
   // `ground` is the plaza's normal strength: a floor scan raked by a low sun reads as cracked mud at full depth.
   const state = { k: 0, exposure: 1.22, bloom: 0.42, fire: 1, ground: 1.2, plaza: new THREE.Color('#857a6e'), dust: new THREE.Color('#6a5848') };
   // By day the plaza reads as sunlit limestone, by night as dark worn stone under fire.
@@ -158,22 +186,31 @@ export function createAtmosphere(scene: THREE.Scene, renderer: THREE.WebGLRender
     state.k = k;
     const u = (sky.material as THREE.ShaderMaterial).uniforms;
     u.uDay.value = k;
-    const horizon = NIGHT_HORIZON.clone().lerp(DAY_HORIZON, k);
+    const P = PLACES[place];
+    u.uSkyline.value = P.skyline;
+    u.uMoonOn.value = P.moon;
+    u.uNightHorizon.value.copy(nightHorizon.set(P.nightHorizon));
+    u.uDayHorizon.value.copy(dayHorizon.set(P.dayHorizon));
+    u.uNightZenith.value.set(P.nightZenith);
+    const horizon = nightHorizon.clone().lerp(dayHorizon, k);
     fog.color.copy(horizon);
     (scene.background as THREE.Color).copy(horizon);
-    fog.near = mix(16, 45, k);
-    fog.far = mix(72, 210, k);
+    fog.near = mix(P.fog.night[0], P.fog.day[0], k);
+    fog.far = mix(P.fog.night[1], P.fog.day[1], k);
     scene.environment = k < 0.5 ? env.night : env.day;
     scene.environmentIntensity = k < 0.5 ? mix(0.9, 0.45, k * 2) : mix(0.45, 0.55, k * 2 - 1);
     key.intensity = 420 * (1 - k);
     // A dark light's shadow map isn't worth re-rendering.
     key.shadow.autoUpdate = k < 1;
-    sun.shadow.autoUpdate = k > 0;
-    sun.intensity = 4.8 * k;
+    // By day the sun; at night in the forest, the same light turns to moonlight.
+    sun.intensity = 4.8 * k + P.moonlight * (1 - k);
+    sun.color.copy(MOON).lerp(SUN, k);
+    sun.position.copy(P.moonlight ? MOON_AT : SUN_AT).lerp(SUN_AT, k);
+    sun.shadow.autoUpdate = sun.intensity > 0;
     hemi.intensity = 0.55 * k;
     rim.intensity = mix(1.8, 0.5, k);
     fill.intensity = mix(0.55, 0.25, k);
-    flood.intensity = 1100 * (1 - k) ** 2;
+    flood.intensity = 1100 * (1 - k) ** 2 * P.flood;
     state.exposure = mix(1.22, 0.95, k);
     state.ground = mix(1.2, 0.8, k);
     state.bloom = mix(0.42, 0.18, k);
@@ -186,6 +223,8 @@ export function createAtmosphere(scene: THREE.Scene, renderer: THREE.WebGLRender
   return {
     state,
     set,
+    get place() { return place; },
+    setPlace(p: Place) { place = p; set(state.k); },
     dispose() { pmrem.dispose(); env.night.dispose(); env.day.dispose(); },
   };
 }

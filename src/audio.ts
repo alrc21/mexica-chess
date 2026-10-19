@@ -8,7 +8,8 @@ import * as THREE from 'three';
  */
 const VARIANTS = {
   grind: 3, lift: 2, thud: 3, crack: 2, crumble: 2, boom: 1, pebble: 5, step: 6,
-  drum: 2, conch: 1, tick: 1, 'fire-loop': 0, 'night-loop': 0, 'day-loop': 0,
+  drum: 2, conch: 1, tick: 1, dust: 2, slab: 2,
+  'fire-loop': 0, 'night-loop': 0, 'day-loop': 0, 'jungle-day-loop': 0, 'jungle-night-loop': 0, 'wind-loop': 0,
 } as const;
 export type Sound = keyof typeof VARIANTS;
 type Opts = { at?: THREE.Vector3; gain?: number; rate?: number; delay?: number; variant?: number };
@@ -42,8 +43,10 @@ export function createAudio() {
     master.connect(limiter).connect(ctx.destination);
     const c = ctx;
     ready = Promise.all(files.map(async f => {
-      const res = await fetch(`/audio/${f}.mp3`);
-      buffers.set(f, await c.decodeAudioData(await res.arrayBuffer()));
+      try {
+        const res = await fetch(`/audio/${f}.mp3`);
+        buffers.set(f, await c.decodeAudioData(await res.arrayBuffer()));
+      } catch { /* a missing or broken file is a silent sound, not a silent game */ }
     })).then(() => { done = true; for (const q of queued.splice(0)) q(); });
   }
 

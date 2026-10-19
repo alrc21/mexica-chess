@@ -8,10 +8,11 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import type { Color, Move, PieceSymbol, Square } from 'chess.js';
 import { advance, animating, easeInOut, tween } from './anim';
-import { createAtmosphere } from './atmosphere';
+import { createAtmosphere, type Place } from './atmosphere';
 import { createAudio, type Audio, type Loop } from './audio';
 import { createBoard, squarePos, SLAB_TOP, type Board, type Hit, type Models } from './board';
 import { createFire, type Fire } from './fire';
+import { createJungle } from './jungle';
 import { MODEL, STONE } from './lore';
 import { createWalk, type Solid } from './walk';
 
@@ -70,6 +71,8 @@ export type Stage = {
   setWalking(on: boolean): Promise<void>;
   /** Night or day, as a slow change of the hour. */
   setDay(on: boolean): Promise<void>;
+  /** Tenochtitlan or Calakmul: an instant swap, made behind the curtain. */
+  setPlace(place: Place): void;
   setCursor(pointer: boolean): void;
   /** Where a square's centre lands on screen, in CSS pixels (used by the browser tests). */
   project(sq: Square, height?: number): { x: number; y: number };
@@ -107,16 +110,27 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
 
   // ── Sound: opened by the first gesture, then the fire and the night begin ─
   const audio = createAudio();
-  const ambience: { night: Loop | null; day: Loop | null } = { night: null, day: null };
+  // Beds of sound per place and hour; only the matching one is heard.
+  const ambience: Partial<Record<'night' | 'day' | 'jungleNight' | 'jungleDay' | 'wind', Loop | null>> = {};
   const fireSpots: THREE.Vector3[] = [];
+  const mixAmbience = (seconds: number, k = atmo.state.k) => {
+    const jungle = atmo.place === 'calakmul' ? 1 : 0;
+    audio.fade(ambience.night ?? null, 0.5 * (1 - k) * (1 - jungle), seconds);
+    audio.fade(ambience.day ?? null, 0.45 * k * (1 - jungle), seconds);
+    audio.fade(ambience.jungleNight ?? null, 0.35 * (1 - k) * jungle, seconds); // the howlers carry: keep them far
+    audio.fade(ambience.jungleDay ?? null, 0.5 * k * jungle, seconds);
+    audio.fade(ambience.wind ?? null, 0.22 * jungle, seconds); // the summit stands in the wind
+  };
   const unlock = () => {
     if (audio.started) return;
     audio.unlock();
     for (const p of fireSpots) audio.fade(audio.loop('fire-loop', p, 1.6), 0.6, 2);
     ambience.night = audio.loop('night-loop');
     ambience.day = audio.loop('day-loop');
-    audio.fade(ambience.night, 0.5 * (1 - atmo.state.k), 3);
-    audio.fade(ambience.day, 0.45 * atmo.state.k, 3);
+    ambience.jungleNight = audio.loop('jungle-night-loop');
+    ambience.jungleDay = audio.loop('jungle-day-loop');
+    ambience.wind = audio.loop('wind-loop');
+    mixAmbience(3);
   };
   addEventListener('pointerdown', unlock);
   addEventListener('keydown', unlock);
@@ -134,6 +148,12 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
   };
   const grain = { tezontle: tile('/textures/grain-tezontle.jpg', 1), basalt: tile('/textures/grain-basalt.jpg', 1) };
 
+  // ── Two places: the plaza of Tenochtitlan, and a summit above the forest of Calakmul ─
+  const tenochtitlan = new THREE.Group();
+  const calakmul = new THREE.Group();
+  calakmul.visible = false;
+  scene.add(tenochtitlan, calakmul);
+
   // ── Plaza: cut flagstones running into the haze ───────────────────────────
   const plaza = new THREE.Mesh(
     new THREE.PlaneGeometry(400, 400),
@@ -149,7 +169,7 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
   plaza.rotation.x = -Math.PI / 2;
   plaza.receiveShadow = true;
   const plazaMat = plaza.material as THREE.MeshStandardMaterial;
-  scene.add(plaza);
+  tenochtitlan.add(plaza);
   const bed = new THREE.Mesh(new THREE.PlaneGeometry(8.1, 8.1), new THREE.MeshStandardMaterial({ color: '#0d0b09', roughness: 1 }));
   bed.rotation.x = -Math.PI / 2;
   bed.position.y = 0.004;
@@ -180,18 +200,25 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
     return m;
   };
 
-  const fires: Fire[] = [];
-  const light = (p: THREE.Vector3, scale: number, seed: number) => {
-    const fire = createFire(seed, scale / 1.7);
-    fire.group.position.copy(p).setY(0.8 * scale);
-    scene.add(fire.group);
-    fires.push(fire);
-    fireSpots.push(fire.group.position);
+  // A fire's flames live in its place, but its light stays in the scene: hiding a
+  // light would change every shader's light count and recompile them all.
+  const fires: { fire: Fire; home: THREE.Object3D }[] = [];
+  const light = (p: THREE.Vector3, scale: number, seed: number, home: THREE.Object3D = scene, lit = true, y = 0.8 * scale) => {
+    const fire = createFire(seed, scale / 1.7, lit);
+    fire.group.position.copy(p).setY(y);
+    home.add(fire.group);
+    if (fire.light) {
+      fire.group.updateMatrixWorld(true);
+      scene.attach(fire.light);
+      fireSpots.push(fire.group.position);
+    }
+    fires.push({ fire, home });
   };
   const BRAZIERS: Solid[] = [[-1, 1], [1, 1], [1, -1], [-1, -1]].map(([sx, sz]) => ({ x: sx * BRAZIER.inset, z: sz * BRAZIER.inset, r: 0.8 }));
 
   let board: Board | null = null;
   let disposed = false;
+  let jungleUpdate: ((t: number, mist: THREE.Color) => void) | null = null;
 
   // ── Scars: a slab where a piece was destroyed is swapped for a broken one ─
   // Each square keeps a stack (intact, cracked, shattered) tagged by ply, so
@@ -231,9 +258,11 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
   // intro: a slow drift before the pyramid · orbit: the player's overview ·
   // walk: on foot · scripted: a tween owns the camera (flights, cinematics).
   const narrow = () => camera.aspect < 0.8;
-  const INTRO = () => narrow()
-    ? V([0, 1.9, 9.5], [0, 5.2, MONUMENT.z], 48)
-    : V([0, 1.35, 7.4], [0, 4.6, MONUMENT.z], 32);
+  // Tenochtitlan: low before the Templo Mayor. Calakmul: over the board's shoulder,
+  // out across the canopy to the great temple on the horizon.
+  const INTRO = () => atmo.place === 'calakmul'
+    ? (narrow() ? V([0, 3.4, 13], [0, -4, -170], 50) : V([0, 2.3, 10], [0, -4, -170], 34))
+    : (narrow() ? V([0, 1.9, 9.5], [0, 5.2, MONUMENT.z], 48) : V([0, 1.35, 7.4], [0, 4.6, MONUMENT.z], 32));
   const GAME = (side: Color) => {
     const s = side === 'w' ? 1 : -1;
     return narrow() ? V([0, 17.2, 12.6 * s], [0, 0, 1.5 * s], 52) : V([0, 8.4, 11.2 * s], [0, 0, 1.25 * s], 30);
@@ -417,9 +446,16 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
     async setDay(on) {
       const k0 = atmo.state.k;
       const k1 = on ? 1 : 0;
-      audio.fade(ambience.night, 0.5 * (1 - k1), 2.4);
-      audio.fade(ambience.day, 0.45 * k1, 2.4);
+      mixAmbience(2.4, k1);
       await tween(2.6, k => atmo.set(k0 + (k1 - k0) * easeInOut(k)));
+    },
+    setPlace(p) {
+      atmo.setPlace(p);
+      tenochtitlan.visible = p === 'tenochtitlan';
+      calakmul.visible = p === 'calakmul';
+      mixAmbience(1.5);
+      renderer.shadowMap.needsUpdate = true;
+      if (mode === 'intro') setView(INTRO());
     },
     setCursor(pointer) { canvas.style.cursor = pointer ? 'pointer' : ''; },
     project(sq, height = 0) {
@@ -433,13 +469,20 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
 
   (async () => {
     const kinds = Object.keys(MODEL) as PieceSymbol[];
-    const [pieces, slabModels, frame, corner, brazier, monument] = await Promise.all([
+    const [pieces, slabModels, frame, corner, brazier, monument, precinct] = await Promise.all([
       Promise.all((['w', 'b'] as Color[]).map(c => Promise.all(kinds.map(k => load(MODEL[k], STONE[c], 9))))),
       Promise.all((['cantera', 'andesite'] as const).map(s => Promise.all([0, 1, 2].map(v => load(`slab${v}`, s, 4))))),
       load('frame', 'basalt', 7),
       load('corner', 'basalt', 5),
       load('brazier', 'basalt', 7),
       load('monument', 'tezontle', 9),
+      (async () => {
+        const [shrineCantera, shrineTezontle, roundTemple, altar, wall, corner] = await Promise.all([
+          load('precinct/shrine', 'cantera', 24), load('precinct/shrine', 'tezontle', 24), load('precinct/round-temple', 'tezontle', 24),
+          load('precinct/altar', 'cantera', 16), load('precinct/serpent-wall', 'basalt', 14), load('precinct/serpent-wall-corner', 'basalt', 8),
+        ]);
+        return { shrineCantera, shrineTezontle, roundTemple, altar, wall, corner };
+      })(),
     ]);
     if (disposed) return;
 
@@ -467,12 +510,59 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
     });
 
     // The Templo Mayor itself, across the plaza, its stairs facing the board.
-    place(monument, new THREE.Vector3(0, 0, MONUMENT.z), 0, MONUMENT.scale).traverse(o => { o.castShadow = false; });
+    place(monument, new THREE.Vector3(0, 0, MONUMENT.z), 0, MONUMENT.scale, tenochtitlan).traverse(o => { o.castShadow = false; });
     for (const sx of [-1, 1]) {
       const p = new THREE.Vector3(sx * 7.6, 0, MONUMENT.z + 7.8);
-      place(brazier, p, sx, 3.2);
-      light(p, 3.2, sx * 2.1 + 5);
+      place(brazier, p, sx, 3.2, tenochtitlan);
+      light(p, 3.2, sx * 2.1 + 5, tenochtitlan);
     }
+
+    // The sacred precinct: shrines flank the Templo Mayor, the round temple of
+    // Ehecatl faces it from behind the player, low altars at the sides, and the
+    // serpent wall closes the whole with a gate in the middle of each side.
+    const facing = (x: number, z: number) => Math.atan2(-x, -z); // their fronts (+z) turned to the board
+    const keep = (o: THREE.Object3D) => { o.traverse(c => { c.castShadow = false; }); return o; };
+    for (const sx of [-1, 1]) {
+      // Pale shrines close on the Templo Mayor's flanks (they frame it in the intro); red ones out to the sides.
+      for (const [x, z, size, shrine] of [[12.5, -23, 5, precinct.shrineCantera], [24, -6, 4.6, precinct.shrineTezontle], [22, 18, 4.6, precinct.shrineCantera]] as const) {
+        const at = new THREE.Vector3(sx * x, 0, z);
+        const s = keep(place(shrine, at, facing(at.x, at.z), size, tenochtitlan));
+        // A small fire on the landing before each shrine's door, seen across the plaza at night.
+        light(new THREE.Vector3(0, 0, 0.36).applyAxisAngle(new THREE.Vector3(0, 1, 0), s.rotation.y).multiplyScalar(size).add(at), size / 5, sx * 3 + z, tenochtitlan, false, 0.64 * size);
+      }
+      for (const sz of [-1, 1]) {
+        const at = new THREE.Vector3(sx * 13, 0, sz * 7);
+        keep(place(precinct.altar, at, facing(at.x, at.z), 3.6, tenochtitlan));
+      }
+    }
+    keep(place(precinct.roundTemple, new THREE.Vector3(0, 0, 27), Math.PI, 5.2, tenochtitlan));
+    // The coatepantli: instanced, one draw call for every segment.
+    const W = 36, S = 3;
+    const wallMesh = precinct.wall.getObjectByProperty('isMesh', true) as THREE.Mesh;
+    precinct.wall.updateMatrixWorld(true);
+    const segments: THREE.Matrix4[] = [];
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 1, 0);
+    for (const [side, rot] of [[0, 0], [1, Math.PI], [2, -Math.PI / 2], [3, Math.PI / 2]] as const) {
+      for (let i = 0; i < 12; i++) {
+        if (i === 5 || i === 6) continue; // the gate
+        const t = -W + 3 + i * 6;
+        const pos = side < 2 ? new THREE.Vector3(t, 0, side === 0 ? -W : W) : new THREE.Vector3(side === 2 ? W : -W, 0, t);
+        segments.push(m.compose(pos, q.setFromAxisAngle(up, rot), new THREE.Vector3(S, S, S)).clone().multiply(wallMesh.matrixWorld));
+      }
+    }
+    const wall = new THREE.InstancedMesh(wallMesh.geometry, wallMesh.material, segments.length);
+    segments.forEach((mat, i) => wall.setMatrixAt(i, mat));
+    wall.receiveShadow = true;
+    tenochtitlan.add(wall);
+    for (const [x, z] of [[-W, -W], [W, -W], [-W, W], [W, W]]) keep(place(precinct.corner, new THREE.Vector3(x, 0, z), 0, S, tenochtitlan));
+
+    // Calakmul: the summit, the canopy, the mist, the temples in the trees.
+    const jungle = createJungle({
+      map: tile('/textures/limestone-diff.jpg', 1, true), normal: tile('/textures/limestone-nor.jpg', 1), rough: tile('/textures/limestone-rough.jpg', 1),
+      floor: { map: tile('/textures/flagstone-diff.jpg', 1, true), normal: tile('/textures/flagstone-nor.jpg', 1), rough: tile('/textures/flagstone-rough.jpg', 1) },
+    });
+    calakmul.add(jungle.group);
+    jungleUpdate = jungle.update;
 
     const models = { w: {}, b: {} } as Models;
     (['w', 'b'] as Color[]).forEach((c, i) => kinds.forEach((k, j) => { models[c][k] = pieces[i][j]; }));
@@ -614,6 +704,7 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
     resize();
   };
 
+  const MIST_DAY = new THREE.Color('#ebe6da'), MIST_NIGHT = new THREE.Color('#4d5b70'), mistColor = new THREE.Color();
   const shakePos = new THREE.Vector3();
   const shakeQuat = new THREE.Quaternion();
   const timer = new THREE.Timer();
@@ -649,7 +740,8 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
     renderer.toneMappingExposure = s.exposure;
     flare *= Math.exp(-real * 3);
     bloom.strength = s.bloom + flare;
-    for (const f of fires) f.update(t, camera, s.fire, 1 - 0.3 * s.k);
+    for (const { fire, home } of fires) fire.update(t, camera, home.visible ? s.fire : 0, 1 - 0.3 * s.k);
+    jungleUpdate?.(t, mistColor.copy(MIST_NIGHT).lerp(MIST_DAY, s.k));
     board?.setDustColor(s.dust);
     plazaMat.normalScale.setScalar(s.ground);
     plazaMat.color.copy(s.plaza);
