@@ -94,9 +94,9 @@ export default function App() {
         background: `radial-gradient(ellipse 75% 70% at 50% 45%, transparent 55%, rgba(${day ? '24,20,14' : '5,4,3'},${day ? 0.28 : 0.6}) 100%)`,
       }} />
       <div aria-hidden className="pointer-events-none fixed inset-x-0 bottom-0 z-10 h-[38svh]"
-        style={{ background: `linear-gradient(to top, rgba(${veil},${day ? 0.62 : 0.85}), rgba(${veil},0) ${day ? '70%' : '100%'})` }} />
+        style={{ background: `linear-gradient(to top, rgba(${veil},${day ? 0.5 : 0.85}), rgba(${veil},0) ${day ? '60%' : '100%'})` }} />
       <div aria-hidden className="pointer-events-none fixed inset-x-0 top-0 z-10 h-[11svh]"
-        style={{ background: `linear-gradient(to bottom, rgba(${veil},${day ? 0.4 : 0.35}), rgba(${veil},0))` }} />
+        style={{ background: `linear-gradient(to bottom, rgba(${veil},${day ? 0.3 : 0.35}), rgba(${veil},0))` }} />
 
       <div aria-hidden className="pointer-events-none fixed inset-0 z-10" style={{
         background: `radial-gradient(ellipse 60% 75% at 0% 100%, rgba(${veil},${day ? 0.75 : 0.82}), rgba(${veil},0) 70%)`,

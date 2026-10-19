@@ -5,8 +5,9 @@ import type { Sound } from './audio';
 /**
  * A captured piece breaks into pieces of itself: chunks cut from its own baked
  * mesh in Blender (blender/fracture.py), thrown by the blow, tumbling, knocking
- * against the standing pieces, settling, then sinking into the plaza. Grit,
- * sparks and a slow cloud of dust go with it.
+ * against the standing pieces and settling. Then the big chunks crumble into
+ * dust and grit, and the grit stays where it fell for the rest of the game —
+ * the battle leaves its marks. Sparks and a slow cloud of dust go with it.
  */
 export type Sfx = (name: Sound, at: THREE.Vector3, gain?: number, rate?: number) => void;
 export type Obstacle = { x: number; z: number; r: number; h: number };
@@ -22,6 +23,7 @@ const rand = (a: number, b: number) => a + Math.random() * (b - a);
 
 type Body = {
   o: THREE.Object3D;
+  crumble?: number; // seconds into crumbling to dust (big chunks only)
   v: THREE.Vector3;
   w: THREE.Vector3;
   corners: THREE.Vector3[]; // local box corners: the lowest one meets the floor
@@ -149,7 +151,11 @@ export function createRubble(scene: THREE.Scene, sfx: Sfx) {
   scene.add(dust.points, sparks.points);
   let shards: Partial<Record<PieceSymbol, THREE.Object3D>> = {};
   let interior: Partial<Record<Stone, THREE.Material>> = {};
-  const piles: { bodies: Body[]; grit: THREE.InstancedMesh; gritBodies: Body[]; age: number; root: THREE.Group }[] = [];
+  type Pile = { bodies: Body[]; grit: THREE.InstancedMesh; gritBodies: Body[]; age: number; root: THREE.Group; ply: number; settled: boolean };
+  const piles: Pile[] = [];
+  const CRUMBLE_AFTER = 2.4; // seconds a settled chunk lies there before it goes to dust
+  const CRUMBLE_FOR = 0.9;
+  const CRUMBS = 6; // grit left behind by each chunk
   const GRIT = new THREE.DodecahedronGeometry(1, 0);
 
   const tmp = new THREE.Vector3();
@@ -178,7 +184,7 @@ export function createRubble(scene: THREE.Scene, sfx: Sfx) {
    * Break `victim` (a placed piece) apart. `blow` is the attacker's direction of
    * travel (zero for a collapse in place), `power` how hard it was hit.
    */
-  function burst(victim: THREE.Object3D, type: PieceSymbol, stone: Stone, blow: THREE.Vector3, power: number) {
+  function burst(victim: THREE.Object3D, type: PieceSymbol, stone: Stone, blow: THREE.Vector3, power: number, ply = 0) {
     const box = new THREE.Box3().setFromObject(victim);
     const c0 = box.getCenter(new THREE.Vector3());
     const height = box.max.y - box.min.y;
@@ -222,9 +228,10 @@ export function createRubble(scene: THREE.Scene, sfx: Sfx) {
       b.w.set(rand(-1, 1), rand(-1, 1), rand(-1, 1)).normalize().multiplyScalar(rand(2, 7) / Math.max(0.5, b.r * 5));
     }
 
-    // Grit: small stones of the same material, one draw call.
+    // Grit: small stones of the same material, one draw call — room for the crumbs to come.
     const n = 44;
-    const grit = new THREE.InstancedMesh(GRIT, exterior ?? new THREE.MeshStandardMaterial(), n);
+    const grit = new THREE.InstancedMesh(GRIT, exterior ?? new THREE.MeshStandardMaterial(), n + bodies.length * CRUMBS);
+    grit.count = n;
     grit.castShadow = true;
     grit.frustumCulled = false;
     root.add(grit);
@@ -254,12 +261,41 @@ export function createRubble(scene: THREE.Scene, sfx: Sfx) {
       tmp.set(rand(box.min.x, box.max.x), rand(box.min.y, box.max.y), rand(box.min.z, box.max.z));
       dust.emit(tmp, new THREE.Vector3(rand(-0.3, 0.3), rand(0, 0.35), rand(-0.3, 0.3)).addScaledVector(blow, 0.5 * power), rand(2.2, 3.6), rand(0.28, 0.45), rand(1.0, 1.7), 0.35, 1.6, -0.03);
     }
-    piles.push({ bodies, grit, gritBodies, age: 0, root });
+    piles.push({ bodies, grit, gritBodies, age: 0, root, ply, settled: false });
   }
 
-  function step(b: Body, dt: number, obstacles: Obstacle[], sinking: number) {
+  /** A settled chunk goes to dust: it shrinks inside a puff and leaves crumbs. */
+  function crumble(pile: Pile, b: Body, dt: number) {
+    if (b.crumble === undefined) {
+      b.crumble = 0;
+      const p = b.o.position;
+      for (let i = 0; i < 6; i++) {
+        tmp.set(p.x + rand(-1, 1) * b.r * 0.5, p.y + rand(-0.3, 0.6) * b.r, p.z + rand(-1, 1) * b.r * 0.5);
+        dust.emit(tmp, new THREE.Vector3(rand(-0.15, 0.15), rand(0.02, 0.15), rand(-0.15, 0.15)), rand(1.4, 2.4), b.r * 0.9, b.r * 2.6, 0.32, 1.8, -0.02);
+      }
+      for (let i = 0; i < CRUMBS && pile.grit.count < pile.grit.instanceMatrix.count; i++) {
+        const o = new THREE.Object3D();
+        const sz = rand(0.01, 0.03) * (0.6 + b.r * 3);
+        o.scale.set(sz * rand(0.7, 1.3), sz * rand(0.5, 1), sz * rand(0.7, 1.3));
+        o.position.set(p.x + rand(-1, 1) * b.r * 0.6, p.y, p.z + rand(-1, 1) * b.r * 0.6);
+        o.rotation.set(rand(0, 6), rand(0, 6), rand(0, 6));
+        const crumb = body(o, new THREE.Box3().setFromCenterAndSize(o.position, tmp.copy(o.scale).multiplyScalar(1.6)));
+        crumb.v.set(rand(-0.3, 0.3), rand(0, 0.3), rand(-0.3, 0.3));
+        crumb.loud = false;
+        pile.gritBodies.push(crumb);
+        pile.grit.count++;
+      }
+    }
+    b.crumble += dt;
+    const k = Math.min(1, b.crumble / CRUMBLE_FOR);
+    b.o.scale.setScalar(Math.max(0.001, 1 - k * k));
+    b.o.position.y -= dt * 0.03;
+    if (k >= 1) b.o.visible = false;
+  }
+
+  function step(b: Body, dt: number, obstacles: Obstacle[]) {
     const p = b.o.position;
-    if (b.asleep) { if (sinking) p.y -= sinking * dt; return; }
+    if (b.asleep) return;
     b.v.y -= GRAVITY * dt;
     p.addScaledVector(b.v, dt);
     const spin = b.w.length();
@@ -312,26 +348,42 @@ export function createRubble(scene: THREE.Scene, sfx: Sfx) {
     setScale(k: number) { dust.material.uniforms.uScale.value = sparks.material.uniforms.uScale.value = k; },
     // The pools live in the scene from the start, so the warm-up compile already sees them.
     warmup(): THREE.Object3D[] { return []; },
+    /** Takes back the marks of moves that were undone (everything after `ply`). */
+    heal(ply: number) {
+      for (let i = piles.length - 1; i >= 0; i--) {
+        if (piles[i].ply <= ply) continue;
+        scene.remove(piles[i].root);
+        piles[i].grit.dispose();
+        piles.splice(i, 1);
+      }
+    },
     /** Advances everything; true while anything is still moving. */
     update(dt: number, obstacles: Obstacle[]) {
       let busy = dust.update(dt);
       busy = sparks.update(dt) || busy;
-      for (let i = piles.length - 1; i >= 0; i--) {
-        const pile = piles[i];
+      for (const pile of piles) {
+        if (pile.settled) continue;
         pile.age += dt;
-        const sinking = pile.age > 4.5 ? 0.09 : 0; // the plaza takes the rubble back
-        for (const b of pile.bodies) step(b, dt, obstacles, sinking);
+        let moving = false;
+        for (const b of pile.bodies) {
+          if (!b.o.visible) continue;
+          step(b, dt, obstacles);
+          if (b.asleep && pile.age > CRUMBLE_AFTER) {
+            if (b.crumble === undefined && !pile.bodies.some(o => o.crumble !== undefined && o.o.visible)) sfx('crumble', b.o.position, 0.3, 1.25);
+            crumble(pile, b, dt);
+          }
+          moving = true;
+        }
         pile.gritBodies.forEach((b, k) => {
-          step(b, dt, [], sinking);
+          if (!b.asleep) moving = true;
+          step(b, dt, []);
           b.o.updateMatrix();
           pile.grit.setMatrixAt(k, m4.copy(b.o.matrix));
         });
         pile.grit.instanceMatrix.needsUpdate = true;
-        if (pile.age > 8.5) {
-          scene.remove(pile.root);
-          pile.grit.dispose();
-          piles.splice(i, 1);
-        } else busy = true;
+        // Once the dust has settled the grit is scenery: no more updates.
+        if (!moving && pile.age > CRUMBLE_AFTER) pile.settled = true;
+        busy = true;
       }
       return busy;
     },

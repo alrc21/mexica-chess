@@ -98,7 +98,7 @@ export function createGame(stage: Stage, engine: Engine, emit: (v: View) => void
       moves: [...new Set(targets.filter(m => !m.captured).map(m => m.to))],
       captures: [...new Set(targets.filter(m => m.captured).map(m => m.to))],
       last: last ? [last.from, last.to] : null,
-      check: chess.inCheck() ? kingSquare(chess.turn()) : null,
+      check: chess.inCheck() && !chess.isCheckmate() ? kingSquare(chess.turn()) : null, // a mated king is rubble
     });
   }
 
@@ -134,13 +134,13 @@ export function createGame(stage: Stage, engine: Engine, emit: (v: View) => void
     if (!byMachine) { selected = null; targets = []; } else targets = [];
     stage.board.highlight({ selected });
     publish();
-    await stage.play(move);
+    await stage.play(move, chess.history().length);
     if (chess.isCheckmate()) {
       // The mated king comes down where he stands; the conch sounds over the plaza.
       deselect();
       stage.board.highlight({});
       const king = kingSquare(chess.turn());
-      if (king) await stage.collapse(king);
+      if (king) await stage.collapse(king, chess.history().length);
       stage.audio.play('conch', { gain: 0.55 });
     } else if (chess.inCheck()) stage.audio.play('drum', { gain: 0.85, variant: 1 });
     busy = false;
@@ -173,7 +173,7 @@ export function createGame(stage: Stage, engine: Engine, emit: (v: View) => void
       thinking = false;
       phase = 'playing';
       busy = true;
-      stage.board.setBoard(chess.board());
+      stage.board.setBoard(chess.board(), 0);
       stage.board.highlight({});
       publish();
       // Play may be the very first gesture: the conch waits for the sounds to arrive.
@@ -253,7 +253,7 @@ export function createGame(stage: Stage, engine: Engine, emit: (v: View) => void
       for (let i = 0; i < plies; i++) chess.undo();
       phase = 'playing';
       deselect();
-      stage.board.setBoard(chess.board());
+      stage.board.setBoard(chess.board(), chess.history().length);
       marks();
       publish();
       if (machineTurn()) machine();

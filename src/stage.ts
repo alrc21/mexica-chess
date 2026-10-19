@@ -62,10 +62,10 @@ export type Stage = {
   toGame(side: Color): Promise<void>;
   /** Back to the slow drift in front of the Templo Mayor. */
   toIntro(): Promise<void>;
-  /** Plays a move; a blow that matters gets a cut to a low, close camera. */
-  play(move: Move): Promise<void>;
+  /** Plays move number `ply`; a blow that matters gets a cut to a low, close camera. */
+  play(move: Move, ply: number): Promise<void>;
   /** Checkmate: the king comes down, watched up close. */
-  collapse(sq: Square): Promise<void>;
+  collapse(sq: Square, ply: number): Promise<void>;
   /** Down among the pieces on foot, or back up to the overview. */
   setWalking(on: boolean): Promise<void>;
   /** Night or day, as a slow change of the hour. */
@@ -134,19 +134,21 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
   };
   const grain = { tezontle: tile('/textures/grain-tezontle.jpg', 1), basalt: tile('/textures/grain-basalt.jpg', 1) };
 
-  // ── Plaza: scanned flagstones running into the haze ───────────────────────
+  // ── Plaza: cut flagstones running into the haze ───────────────────────────
   const plaza = new THREE.Mesh(
     new THREE.PlaneGeometry(400, 400),
     new THREE.MeshStandardMaterial({
-      map: tile('/textures/plaza-diff.jpg', 132, true),
-      normalMap: tile('/textures/plaza-nor.jpg', 132),
-      roughnessMap: tile('/textures/plaza-rough.jpg', 132),
+      // Cut flagstones about a board square each, so the plaza and the board share a measure.
+      map: tile('/textures/flagstone-diff.jpg', 100, true),
+      normalMap: tile('/textures/flagstone-nor.jpg', 100),
+      roughnessMap: tile('/textures/flagstone-rough.jpg', 100),
       color: '#6e655c',
       normalScale: new THREE.Vector2(1.5, 1.5),
     }),
   );
   plaza.rotation.x = -Math.PI / 2;
   plaza.receiveShadow = true;
+  const plazaMat = plaza.material as THREE.MeshStandardMaterial;
   scene.add(plaza);
   const bed = new THREE.Mesh(new THREE.PlaneGeometry(8.1, 8.1), new THREE.MeshStandardMaterial({ color: '#0d0b09', roughness: 1 }));
   bed.rotation.x = -Math.PI / 2;
@@ -190,6 +192,40 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
 
   let board: Board | null = null;
   let disposed = false;
+
+  // ── Scars: a slab where a piece was destroyed is swapped for a broken one ─
+  // Each square keeps a stack (intact, cracked, shattered) tagged by ply, so
+  // Undo can take the damage back exactly.
+  type Slab = { variant: number; stone: 'cantera' | 'andesite'; stack: { ply: number; obj: THREE.Object3D }[] };
+  const slabs = new Map<Square, Slab>();
+  let broken: (THREE.Object3D | null)[][] = []; // [variant][level-1], loaded after the first frame
+  const interiorOf: Partial<Record<'cantera' | 'andesite', THREE.Material>> = {};
+  const scar = (sq: Square, ply: number) => {
+    const s = slabs.get(sq);
+    const src = s && broken[s.variant]?.[s.stack.length - 1]; // intact → cracked → shattered
+    if (!s || !src) return;
+    const top = s.stack[s.stack.length - 1].obj;
+    const exterior = (s.stack[0].obj.getObjectByProperty('isMesh', true) as THREE.Mesh).material as THREE.Material;
+    const obj = src.clone();
+    obj.traverse(o => {
+      const m = o as THREE.Mesh;
+      if (!m.isMesh) return;
+      m.material = (m.material as THREE.Material).name === 'interior' ? interiorOf[s.stone]! : exterior;
+      m.receiveShadow = true;
+    });
+    obj.position.copy(top.position);
+    obj.rotation.copy(top.rotation);
+    scene.add(obj);
+    top.visible = false;
+    s.stack.push({ ply, obj });
+    renderer.shadowMap.needsUpdate = true;
+  };
+  const heal = (ply: number) => {
+    for (const s of slabs.values()) {
+      while (s.stack.length > 1 && s.stack[s.stack.length - 1].ply > ply) scene.remove(s.stack.pop()!.obj);
+      s.stack[s.stack.length - 1].obj.visible = true;
+    }
+  };
 
   // ── Camera ────────────────────────────────────────────────────────────────
   // intro: a slow drift before the pyramid · orbit: the player's overview ·
@@ -355,23 +391,23 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
       setNear(0.1);
       mode = 'intro';
     },
-    play(move) {
+    play(move, ply) {
       const b = board!;
       const big = !!move.captured && move.captured !== 'p';
-      if (mode !== 'orbit' || !big) return b.play(move);
+      if (mode !== 'orbit' || !big) return b.play(move, ply);
       const to = squarePos(move.to as Square);
       const from = squarePos(move.from as Square);
       const along = to.clone().sub(from).setY(0).normalize();
       // The attacker's own path is not in the way: it's the subject.
       const path = [from, from.clone().lerp(to, 0.5), to];
-      return cinematic(from.clone().lerp(to, 0.7), along, () => b.play(move), 0.25, path);
+      return cinematic(from.clone().lerp(to, 0.7), along, () => b.play(move, ply), 0.25, path);
     },
-    collapse(sq) {
+    collapse(sq, ply) {
       const b = board!;
-      if (mode !== 'orbit') return b.collapse(sq);
+      if (mode !== 'orbit') return b.collapse(sq, ply);
       const at = squarePos(sq);
       const along = new THREE.Vector3(0, 0, side === 'w' ? -1 : 1);
-      return cinematic(at, along, () => b.collapse(sq), 0.5, [at]);
+      return cinematic(at, along, () => b.collapse(sq, ply), 0.5, [at]);
     },
     async setWalking(on) {
       if (on === walking) return;
@@ -397,7 +433,7 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
 
   (async () => {
     const kinds = Object.keys(MODEL) as PieceSymbol[];
-    const [pieces, slabs, frame, corner, brazier, monument] = await Promise.all([
+    const [pieces, slabModels, frame, corner, brazier, monument] = await Promise.all([
       Promise.all((['w', 'b'] as Color[]).map(c => Promise.all(kinds.map(k => load(MODEL[k], STONE[c], 9))))),
       Promise.all((['cantera', 'andesite'] as const).map(s => Promise.all([0, 1, 2].map(v => load(`slab${v}`, s, 4))))),
       load('frame', 'basalt', 7),
@@ -411,8 +447,10 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
     for (let f = 0; f < 8; f++) {
       for (let r = 0; r < 8; r++) {
         const h = (f * 73 + r * 151 + f * r * 31) % 97;
-        place(slabs[(f + r) % 2 === 1 ? 0 : 1][h % 3], new THREE.Vector3(f - 3.5, 0, 3.5 - r), (h % 4) * Math.PI / 2)
-          .traverse(o => { o.castShadow = false; }); // flat: nothing to cast
+        const light = (f + r) % 2 === 1;
+        const obj = place(slabModels[light ? 0 : 1][h % 3], new THREE.Vector3(f - 3.5, 0, 3.5 - r), (h % 4) * Math.PI / 2);
+        obj.traverse(o => { o.castShadow = false; }); // flat: nothing to cast
+        slabs.set(`${String.fromCharCode(97 + f)}${r + 1}` as Square, { variant: h % 3, stone: light ? 'cantera' : 'andesite', stack: [{ ply: 0, obj }] });
       }
     }
     for (let k = 0; k < 4; k++) {
@@ -438,7 +476,7 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
 
     const models = { w: {}, b: {} } as Models;
     (['w', 'b'] as Color[]).forEach((c, i) => kinds.forEach((k, j) => { models[c][k] = pieces[i][j]; }));
-    board = createBoard(scene, models, (name, at, gain, rate) => audio.play(name, { at, gain, rate }), { impact });
+    board = createBoard(scene, models, (name, at, gain, rate) => audio.play(name, { at, gain, rate }), { impact, scar, heal });
     // Compile every shader now, behind the curtain, not on the first click.
     const warm = board.warmup();
     scene.add(...warm);
@@ -456,6 +494,12 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
     await Promise.all(kinds.map(async k => { shards[k] = (await gltf.loadAsync(`/models/shards/${MODEL[k]}.glb`)).scene; }));
     if (disposed) return;
     board.setShards(shards, interior);
+    // Broken slabs (blender/damage.py): cracked and shattered, per variant. Missing files just mean no scars.
+    interiorOf.cantera = new THREE.MeshStandardMaterial({ color: '#b9a98f', roughness: 0.95, normalMap: grain.tezontle, normalScale: new THREE.Vector2(0.8, 0.8) });
+    interiorOf.andesite = new THREE.MeshStandardMaterial({ color: '#4a4844', roughness: 0.9, normalMap: grain.basalt, normalScale: new THREE.Vector2(0.9, 0.9) });
+    broken = await Promise.all([0, 1, 2].map(v => Promise.all([1, 2].map(l =>
+      gltf.loadAsync(`/models/damage/slab${v}-${l}.glb`).then(g => g.scene, () => null)))));
+    if (disposed) return;
     // Warm their programs (and instanced grit) without blocking a frame.
     const sample = shards.p.clone();
     const pieceMat = (pieces[0][0].getObjectByProperty('isMesh', true) as THREE.Mesh).material as THREE.Material;
@@ -607,6 +651,8 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
     bloom.strength = s.bloom + flare;
     for (const f of fires) f.update(t, camera, s.fire, 1 - 0.3 * s.k);
     board?.setDustColor(s.dust);
+    plazaMat.normalScale.setScalar(s.ground);
+    plazaMat.color.copy(s.plaza);
     board?.setParticleScale(renderer.domElement.height / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2)));
     audio.listen(camera);
 

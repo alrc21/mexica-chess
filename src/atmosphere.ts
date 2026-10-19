@@ -8,7 +8,7 @@ import * as THREE from 'three';
  */
 
 const NIGHT_HORIZON = new THREE.Color('#100d0b');
-const DAY_HORIZON = new THREE.Color('#d2cab8');
+const DAY_HORIZON = new THREE.Color('#e3c9a0'); // late-afternoon haze, warm
 
 /** A dome: night haze and stars, or a deep sky with sun and haze; volcano silhouettes in both. */
 function dome() {
@@ -20,7 +20,7 @@ function dome() {
       fog: false,
       uniforms: {
         uDay: { value: 0 },
-        uSun: { value: new THREE.Vector3(10, 10, 7).normalize() },
+        uSun: { value: new THREE.Vector3(10, 5.6, 7).normalize() },
         uNightHorizon: { value: NIGHT_HORIZON.clone() },
         uDayHorizon: { value: DAY_HORIZON.clone() },
       },
@@ -53,7 +53,8 @@ function dome() {
           float star = step(0.986, hash(cell + 3.1)) * smoothstep(0.32, 0.0, length(fract(g) - at));
           night += vec3(0.75, 0.72, 0.66) * star * smoothstep(0.08, 0.4, d.y) * (0.35 + 0.65 * hash(cell + 9.1));
           // Day: a deep high-altitude blue over a pale haze, the sun and its halo.
-          vec3 day = mix(uDayHorizon, vec3(0.05, 0.17, 0.42), pow(smoothstep(-0.01, 0.6, d.y), 0.45));
+          vec3 day = mix(uDayHorizon, vec3(0.06, 0.2, 0.46), pow(smoothstep(-0.01, 0.55, d.y), 0.5));
+          day = mix(day, vec3(1.0, 0.72, 0.42), pow(max(dot(normalize(vec3(d.x, 0.0, d.z)), normalize(vec3(uSun.x, 0.0, uSun.z))), 0.0), 3.0) * (1.0 - smoothstep(0.0, 0.35, d.y)) * 0.45);
           float s = max(dot(d, uSun), 0.0);
           day += vec3(1.0, 0.82, 0.58) * (pow(s, 6.0) * 0.22 + pow(s, 900.0) * 30.0);
           vec3 c = mix(night, day, uDay);
@@ -90,7 +91,7 @@ function lightformers(day: boolean) {
     env.add(m);
   };
   if (day) {
-    card('#fff1dc', 14, 1.4, 1.4, 4.6, 4.6, 3.2); // sun
+    card('#ffdcae', 14, 1.4, 1.4, 4.6, 2.6, 3.2); // sun, low and warm
     card('#a3b9d8', 1.6, 12, 4, 0, 7, 0);       // open sky overhead
     card('#8a7558', 1.1, 14, 3, 0, -4, 0);      // sunlit plaza bouncing back
   } else {
@@ -122,8 +123,8 @@ export function createAtmosphere(scene: THREE.Scene, renderer: THREE.WebGLRender
   key.shadow.radius = 3;
   // Day key: the sun from the side, low enough in the afternoon to rake the carving
   // of both armies and the temple's stairs.
-  const sun = new THREE.DirectionalLight('#fff0dc', 0);
-  sun.position.set(10, 10, 7);
+  const sun = new THREE.DirectionalLight('#ffdcb0', 0);
+  sun.position.set(10, 5.6, 7); // ≈27° up: the golden hour, long shadows across the board
   sun.castShadow = true;
   sun.shadow.mapSize.set(4096, 4096);
   const sc = sun.shadow.camera;
@@ -134,7 +135,7 @@ export function createAtmosphere(scene: THREE.Scene, renderer: THREE.WebGLRender
   sun.shadow.bias = -0.0003;
   sun.shadow.normalBias = 0.02;
   sun.shadow.radius = 2;
-  const hemi = new THREE.HemisphereLight('#9db8db', '#7a6650', 0);
+  const hemi = new THREE.HemisphereLight('#8fb0d8', '#8a6a4a', 0);
   const rim = new THREE.DirectionalLight('#c4cee2', 1.8);
   rim.position.set(3, 9, -12);
   const fill = new THREE.DirectionalLight('#ffe6cc', 0.55); // from the player's seat, so faces never go to mud
@@ -147,8 +148,11 @@ export function createAtmosphere(scene: THREE.Scene, renderer: THREE.WebGLRender
   key.shadow.needsUpdate = sun.shadow.needsUpdate = true;
 
   const mix = (a: number, b: number, k: number) => a + (b - a) * k;
-  const state = { k: 0, exposure: 1.22, bloom: 0.42, fire: 1, dust: new THREE.Color('#6a5848') };
-  const DUST = { night: new THREE.Color('#6a5848'), day: new THREE.Color('#c4b6a0') };
+  // `ground` is the plaza's normal strength: a floor scan raked by a low sun reads as cracked mud at full depth.
+  const state = { k: 0, exposure: 1.22, bloom: 0.42, fire: 1, ground: 1.2, plaza: new THREE.Color('#857a6e'), dust: new THREE.Color('#6a5848') };
+  // By day the plaza reads as sunlit limestone, by night as dark worn stone under fire.
+  const PLAZA = { night: new THREE.Color('#857a6e'), day: new THREE.Color('#c9b9a0') };
+  const DUST = { night: new THREE.Color('#6a5848'), day: new THREE.Color('#cdb594') };
 
   function set(k: number) {
     state.k = k;
@@ -157,23 +161,25 @@ export function createAtmosphere(scene: THREE.Scene, renderer: THREE.WebGLRender
     const horizon = NIGHT_HORIZON.clone().lerp(DAY_HORIZON, k);
     fog.color.copy(horizon);
     (scene.background as THREE.Color).copy(horizon);
-    fog.near = mix(16, 30, k);
-    fog.far = mix(72, 160, k);
+    fog.near = mix(16, 45, k);
+    fog.far = mix(72, 210, k);
     scene.environment = k < 0.5 ? env.night : env.day;
-    scene.environmentIntensity = k < 0.5 ? mix(0.9, 0.5, k * 2) : mix(0.5, 0.6, k * 2 - 1);
+    scene.environmentIntensity = k < 0.5 ? mix(0.9, 0.45, k * 2) : mix(0.45, 0.55, k * 2 - 1);
     key.intensity = 420 * (1 - k);
     // A dark light's shadow map isn't worth re-rendering.
     key.shadow.autoUpdate = k < 1;
     sun.shadow.autoUpdate = k > 0;
-    sun.intensity = 4.4 * k;
-    hemi.intensity = 0.7 * k;
+    sun.intensity = 4.8 * k;
+    hemi.intensity = 0.55 * k;
     rim.intensity = mix(1.8, 0.5, k);
     fill.intensity = mix(0.55, 0.25, k);
     flood.intensity = 1100 * (1 - k) ** 2;
-    state.exposure = mix(1.22, 1.0, k);
-    state.bloom = mix(0.42, 0.14, k);
+    state.exposure = mix(1.22, 0.95, k);
+    state.ground = mix(1.2, 0.8, k);
+    state.bloom = mix(0.42, 0.18, k);
     state.fire = mix(1, 0.08, k);
     state.dust.copy(DUST.night).lerp(DUST.day, k);
+    state.plaza.copy(PLAZA.night).lerp(PLAZA.day, k);
   }
   set(0);
 

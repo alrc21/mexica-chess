@@ -24,42 +24,53 @@ export type Board = ReturnType<typeof createBoard>;
 /** What's under the pointer: the first stone the ray meets, and the square on the ground. */
 export type Hit = { piece: Square | null; ground: Square | null };
 type Effect = (dt: number) => boolean; // false when finished
-/** The stage turns blows into camera shake and slow motion. */
-export type BoardHooks = { impact(at: THREE.Vector3, power: number): void };
+/**
+ * The stage turns blows into camera shake and slow motion, scars the slab
+ * where a piece was destroyed, and heals scars when moves are taken back.
+ */
+export type BoardHooks = {
+  impact(at: THREE.Vector3, power: number): void;
+  scar(sq: Square, ply: number): void;
+  heal(ply: number): void;
+};
 
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
 
 /**
- * Marks are whole squares of light, not dots: a soft fill that glows toward
- * the edges, a bright line and a dark keyline outside it, so a tile reads on
- * pale cantera and grey andesite alike. One shader, one material per tile.
+ * Marks are whole squares of light laid on the stone, not panels on top of
+ * it: an even warm wash (added light, so the grain and cracks show through),
+ * a hairline inset from the edge, drawn as corner brackets for a target and
+ * closed all round for the stone you hold or the square under your pointer.
  */
 const TILE = new THREE.PlaneGeometry(0.95, 0.95).rotateX(-Math.PI / 2);
 const tileMaterial = () => new THREE.ShaderMaterial({
   uniforms: {
     uColor: { value: new THREE.Color() },
-    uFill: { value: 0 }, uGlow: { value: 0 }, uLine: { value: 0 }, uPulse: { value: 0 },
+    uFill: { value: 0 }, uLine: { value: 0 }, uFull: { value: 0 }, uPulse: { value: 0 },
     uReveal: { value: 0 }, uHover: { value: 0 }, uTime: { value: 0 },
   },
   vertexShader: /* glsl */ `
     varying vec2 vUv;
     void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
-  // Premultiplied: the fill and glow add light to the stone (its grain stays
-  // visible), the line is laid on top, the keyline darkens what's under it.
+  // Premultiplied: the wash adds light, the hairline is laid over it.
   fragmentShader: /* glsl */ `
     uniform vec3 uColor;
-    uniform float uFill, uGlow, uLine, uPulse, uReveal, uHover, uTime;
+    uniform float uFill, uLine, uFull, uPulse, uReveal, uHover, uTime;
     varying vec2 vUv;
     void main() {
       vec2 q = abs(vUv - 0.5);
-      float e = 0.5 - max(q.x, q.y);           // 0 at the edge, 0.5 at the centre
+      float e = 0.5 - max(q.x, q.y);                 // 0 at the edge
       float aa = fwidth(e);
-      float line = smoothstep(0.026 - aa, 0.026, e) * (1.0 - smoothstep(0.048, 0.048 + aa, e)) * uLine;
-      float key = smoothstep(0.008 - aa, 0.008, e) * (1.0 - smoothstep(0.026, 0.026 + aa, e)) * step(0.001, uLine) * 0.6;
+      float ring = smoothstep(0.034 - aa, 0.034, e) * (1.0 - smoothstep(0.046, 0.046 + aa, e));
+      float c = min(q.x, q.y);                       // how far along the edge, from its middle
+      float ca = fwidth(c);
+      float corner = smoothstep(0.31 - ca, 0.31, c);
+      float full = max(uFull, uHover);
+      float line = ring * mix(corner, 1.0, full) * uLine;
       float pulse = 1.0 + uPulse * 0.45 * sin(uTime * 4.0);
-      float light = (uFill + uHover * 0.14 + (uGlow + uHover * 0.25) * exp(-e * 11.0)) * pulse * (1.0 - line);
-      vec3 rgb = uColor * light + mix(uColor, vec3(1.0), 0.55) * line;
-      gl_FragColor = vec4(rgb, line + key) * uReveal;
+      float wash = (uFill + uHover * 0.1) * pulse * (1.0 - line);
+      vec3 rgb = uColor * wash + mix(uColor, vec3(1.0), 0.6) * line;
+      gl_FragColor = vec4(rgb, line * 0.92) * uReveal;
     }`,
   transparent: true,
   depthWrite: false,
@@ -69,12 +80,12 @@ const tileMaterial = () => new THREE.ShaderMaterial({
   blendDst: THREE.OneMinusSrcAlphaFactor,
 });
 type TileKind = 'move' | 'capture' | 'selected' | 'last' | 'check';
-const TILES: Record<TileKind, { color: string; fill: number; glow: number; line: number; pulse?: number }> = {
-  move: { color: '#ffb35c', fill: 0.16, glow: 0.55, line: 0.9 },
-  capture: { color: '#ff4a22', fill: 0.22, glow: 0.8, line: 1 },
-  selected: { color: '#ffd9a3', fill: 0.22, glow: 0.35, line: 1 },
-  last: { color: '#f2b66a', fill: 0.08, glow: 0.14, line: 0 },
-  check: { color: '#ff2a1a', fill: 0.3, glow: 0.7, line: 1, pulse: 1 },
+const TILES: Record<TileKind, { color: string; fill: number; line: number; full?: boolean; pulse?: number }> = {
+  move: { color: '#ffb766', fill: 0.15, line: 1 },
+  capture: { color: '#ff4a22', fill: 0.24, line: 1 },
+  selected: { color: '#ffd9a3', fill: 0.2, line: 1, full: true },
+  last: { color: '#f2b66a', fill: 0.09, line: 0 },
+  check: { color: '#ff2a1a', fill: 0.32, line: 1, full: true, pulse: 1 },
 };
 
 export function createBoard(scene: THREE.Scene, models: Models, sfx: Sfx, hooks: BoardHooks) {
@@ -100,8 +111,12 @@ export function createBoard(scene: THREE.Scene, models: Models, sfx: Sfx, hooks:
   }
 
   let dirty = false; // pieces changed without an effect running: shadows must catch up once
-  function setBoard(board: ({ square: Square; type: PieceSymbol; color: Color } | null)[][]) {
+  let ply = 0; // the move being played: scars and rubble remember it, so Undo can take them back
+  /** Set out the pieces for a position `at` plies in; marks of later moves are taken back. */
+  function setBoard(board: ({ square: Square; type: PieceSymbol; color: Color } | null)[][], at = 0) {
     dirty = true;
+    rubble.heal(at);
+    hooks.heal(at);
     group.clear();
     pieces.clear();
     lifted = null;
@@ -125,8 +140,8 @@ export function createBoard(scene: THREE.Scene, models: Models, sfx: Sfx, hooks:
       const u = material.uniforms;
       u.uColor.value.set(spec.color);
       u.uFill.value = spec.fill;
-      u.uGlow.value = spec.glow;
       u.uLine.value = spec.line;
+      u.uFull.value = spec.full ? 1 : 0;
       u.uPulse.value = spec.pulse ?? 0;
       const mesh = new THREE.Mesh(TILE, material);
       mesh.position.copy(squarePos(sq)).setY(y);
@@ -264,16 +279,18 @@ export function createBoard(scene: THREE.Scene, models: Models, sfx: Sfx, hooks:
 
   /** Break a placed piece: chunks of itself, thrown along the blow. */
   function shatter(victim: THREE.Object3D, blow: THREE.Vector3, power: number) {
-    const { type, color } = victim.userData as { type: PieceSymbol; color: Color };
+    const { type, color, square } = victim.userData as { type: PieceSymbol; color: Color; square: Square };
     const at = victim.position.clone().setY(0.4);
-    rubble.burst(victim, type, STONE[color], blow, power);
+    rubble.burst(victim, type, STONE[color], blow, power, ply);
+    hooks.scar(square, ply);
     sfx('crack', at, 1);
     sfx('boom', at, 0.55 * power, 0.9 + Math.random() * 0.15);
     sfx('crumble', at, 0.8, undefined);
     hooks.impact(at, power);
   }
 
-  async function play(m: Move) {
+  async function play(m: Move, at: number) {
+    ply = at;
     const mover = pieces.get(m.from as Square)!;
     if (lifted === mover) lifted = null;
     pieces.delete(m.from as Square);
@@ -305,7 +322,7 @@ export function createBoard(scene: THREE.Scene, models: Models, sfx: Sfx, hooks:
 
     if (m.promotion) {
       // The pawn bursts upward and the new piece rises out of its dust.
-      rubble.burst(mover, 'p', STONE[m.color], new THREE.Vector3(), 0.55);
+      rubble.burst(mover, 'p', STONE[m.color], new THREE.Vector3(), 0.55, ply);
       sfx('crack', to, 0.7);
       sfx('drum', to, 0.9, 1);
       const crowned = spawn(m.color, m.promotion, m.to as Square);
@@ -349,7 +366,8 @@ export function createBoard(scene: THREE.Scene, models: Models, sfx: Sfx, hooks:
   }
 
   /** Checkmate: the king trembles, then comes down where he stands. */
-  async function collapse(sq: Square) {
+  async function collapse(sq: Square, at: number) {
+    ply = at;
     const king = pieces.get(sq);
     if (!king) return;
     pieces.delete(sq);
@@ -360,7 +378,8 @@ export function createBoard(scene: THREE.Scene, models: Models, sfx: Sfx, hooks:
       king.position.set(p.x + rand(-a, a), p.y + rand(0, a * 0.5), p.z + rand(-a, a));
       king.rotation.z = rand(-1, 1) * a * 0.6;
     });
-    rubble.burst(king, 'k', STONE[king.userData.color as Color], new THREE.Vector3(), 0.45);
+    rubble.burst(king, 'k', STONE[king.userData.color as Color], new THREE.Vector3(), 0.45, ply);
+    hooks.scar(sq, ply);
     sfx('crack', p, 1, 0.8);
     sfx('boom', p, 1, 0.75);
     sfx('crumble', p, 1, 0.85);
