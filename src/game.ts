@@ -134,7 +134,15 @@ export function createGame(stage: Stage, engine: Engine, emit: (v: View) => void
     if (!byMachine) { selected = null; targets = []; } else targets = [];
     stage.board.highlight({ selected });
     publish();
-    await stage.board.play(move);
+    await stage.play(move);
+    if (chess.isCheckmate()) {
+      // The mated king comes down where he stands; the conch sounds over the plaza.
+      deselect();
+      stage.board.highlight({});
+      const king = kingSquare(chess.turn());
+      if (king) await stage.collapse(king);
+      stage.audio.play('conch', { gain: 0.55 });
+    } else if (chess.inCheck()) stage.audio.play('drum', { gain: 0.85, variant: 1 });
     busy = false;
     if (chess.isGameOver()) { phase = 'over'; deselect(); } else reselect();
     marks();
@@ -168,6 +176,7 @@ export function createGame(stage: Stage, engine: Engine, emit: (v: View) => void
       stage.board.setBoard(chess.board());
       stage.board.highlight({});
       publish();
+      stage.audio.play('conch', { gain: 0.5 });
       await stage.toGame(s.side);
       busy = false;
       marks();
@@ -175,32 +184,35 @@ export function createGame(stage: Stage, engine: Engine, emit: (v: View) => void
       if (machineTurn()) machine();
     },
 
-    click(h: Hit) {
+    /** A click on the board. True if it picked up a piece or moved one (on foot, anything else walks). */
+    click(h: Hit): boolean {
       const sq = resolve(h);
-      if (sq) game.square(sq);
+      return sq ? game.square(sq) : false;
     },
 
-    square(sq: Square) {
-      if (phase !== 'playing' || promoting) return;
+    square(sq: Square): boolean {
+      if (phase !== 'playing' || promoting) return false;
       const options = targets.filter(m => m.to === sq);
-      if (selected && options.length && busy) { queued = sq; return; } // clicked while stone was still moving
+      if (selected && options.length && busy) { queued = sq; return true; } // clicked while stone was still moving
       if (selected && options.length && canMove()) {
         if (options.some(m => m.promotion)) {
           promoting = { from: selected, to: sq };
           publish();
-          return;
+          return true;
         }
         apply({ from: selected, to: sq });
-        return;
+        return true;
       }
       const piece = chess.get(sq);
-      if (piece && piece.color === mine() && sq !== selected) {
+      const pick = !!piece && piece.color === mine() && sq !== selected;
+      if (pick) {
         selected = sq;
         // chess.js only lists moves for the side to move: during the machine's turn this is empty.
         targets = chess.moves({ square: sq, verbose: true });
         stage.board.lift(sq);
       } else deselect();
       marks();
+      return pick || !!piece; // a piece is solid: clicking one never walks you into it
     },
 
     promote(type: PieceSymbol) {

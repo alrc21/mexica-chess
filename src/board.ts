@@ -1,9 +1,12 @@
 import * as THREE from 'three';
 import type { Color, Move, PieceSymbol, Square } from 'chess.js';
-import { easeInOut, easeOutBack, tween } from './anim';
+import { easeInOut, easeOutBack, tween, wait } from './anim';
+import { createRubble, type Obstacle, type Sfx } from './rubble';
+import { STONE } from './lore';
 
 export const SLAB_TOP = 0.06;
 const LIFT = 0.09;
+const HOVER = 0.13; // how high stone floats while it travels
 
 /** Board space: files a–h along +x, rank 1 nearest +z (tezontle's side). */
 export const squarePos = (sq: Square) =>
@@ -21,6 +24,8 @@ export type Board = ReturnType<typeof createBoard>;
 /** What's under the pointer: the first stone the ray meets, and the square on the ground. */
 export type Hit = { piece: Square | null; ground: Square | null };
 type Effect = (dt: number) => boolean; // false when finished
+/** The stage turns blows into camera shake and slow motion. */
+export type BoardHooks = { impact(at: THREE.Vector3, power: number): void };
 
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
 
@@ -72,34 +77,23 @@ const TILES: Record<TileKind, { color: string; fill: number; glow: number; line:
   check: { color: '#ff2a1a', fill: 0.3, glow: 0.7, line: 1, pulse: 1 },
 };
 
-const SHARD = new THREE.IcosahedronGeometry(1, 0);
-
-function dustTexture() {
-  const c = document.createElement('canvas');
-  c.width = c.height = 64;
-  const x = c.getContext('2d')!;
-  const g = x.createRadialGradient(32, 32, 0, 32, 32, 32);
-  g.addColorStop(0, 'rgba(255,255,255,1)');
-  g.addColorStop(1, 'rgba(255,255,255,0)');
-  x.fillStyle = g;
-  x.fillRect(0, 0, 64, 64);
-  return new THREE.CanvasTexture(c);
-}
-
-export function createBoard(scene: THREE.Scene, models: Models) {
+export function createBoard(scene: THREE.Scene, models: Models, sfx: Sfx, hooks: BoardHooks) {
   const group = new THREE.Group();
   const marks = new THREE.Group();
   scene.add(group, marks);
   const pieces = new Map<Square, THREE.Object3D>();
   const effects: Effect[] = [];
-  const dustTex = dustTexture();
+  const rubble = createRubble(scene, sfx);
   let lifted: THREE.Object3D | null = null;
 
+  const heights = new Map<THREE.Object3D, number>();
   function spawn(color: Color, type: PieceSymbol, sq: Square) {
-    const o = models[color][type].clone();
+    const src = models[color][type];
+    if (!heights.has(src)) heights.set(src, new THREE.Box3().setFromObject(src).max.y);
+    const o = src.clone();
     o.position.copy(squarePos(sq));
     o.rotation.y = color === 'w' ? Math.PI : 0; // the armies face each other
-    o.userData = { square: sq };
+    o.userData = { square: sq, color, type, h: heights.get(src) };
     group.add(o);
     pieces.set(sq, o);
     return o;
@@ -182,6 +176,7 @@ export function createBoard(scene: THREE.Scene, models: Models) {
       const y1 = SLAB_TOP + (up ? LIFT : 0);
       tween(0.22, k => { o.position.y = y0 + (y1 - y0) * easeInOut(k); });
     }
+    if (next && next !== lifted) sfx('lift', next.position, 0.5);
     lifted = next;
   }
 
@@ -210,110 +205,72 @@ export function createBoard(scene: THREE.Scene, models: Models) {
     return { piece, ground };
   }
 
-  // ── Motion ────────────────────────────────────────────────────────────────
-  /** Carry a piece in an arc, leaning into the move; `impact` fires just before it lands. */
-  function arc(o: THREE.Object3D, to: THREE.Vector3, leap: boolean, dur: number, impact?: () => void) {
+  // ── Motion: heavy stone, moved by something stronger than hands ─────────
+  const up = new THREE.Vector3(0, 1, 0);
+  const lean = new THREE.Quaternion();
+
+  /**
+   * Float a piece to `to`: it rises, travels with a lag-then-lean that sells
+   * the weight, and (if `land`) settles with a thud and a breath of dust.
+   */
+  function glide(o: THREE.Object3D, to: THREE.Vector3, dur: number, land = true) {
     const from = o.position.clone();
-    const flatD = Math.hypot(to.x - from.x, to.z - from.z);
-    const h = leap ? 0.95 : 0.22 + 0.07 * flatD;
-    const dir = new THREE.Vector3(to.x - from.x, 0, to.z - from.z).normalize();
-    const axis = new THREE.Vector3(0, 1, 0).cross(dir);
+    const y0 = from.y;
+    const flat = new THREE.Vector3(to.x - from.x, 0, to.z - from.z);
+    const axis = flat.lengthSq() > 1e-6 ? up.clone().cross(flat.normalize()) : null;
     const base = o.quaternion.clone();
-    const lean = new THREE.Quaternion();
-    let struck = false;
+    sfx('grind', o.position, 0.55, 0.85 + Math.random() * 0.2);
     return tween(dur, k => {
       const e = easeInOut(k);
       o.position.lerpVectors(from, to, e);
-      o.position.y += Math.sin(Math.PI * e) * h;
-      if (flatD > 0) o.quaternion.copy(base).premultiply(lean.setFromAxisAngle(axis, 0.2 * Math.sin(Math.PI * e)));
-      if (impact && !struck && k > 0.7) { struck = true; impact(); }
+      const rise = THREE.MathUtils.smoothstep(k, 0, 0.2);
+      const fall = land ? THREE.MathUtils.smoothstep(k, 0.78, 1) : 0;
+      o.position.y = (y0 + (SLAB_TOP + HOVER - y0) * rise) * (1 - fall) + SLAB_TOP * fall;
+      // Lags as it starts, leans in as it stops.
+      if (axis) o.quaternion.copy(base).premultiply(lean.setFromAxisAngle(axis, -0.09 * Math.sin(2 * Math.PI * e)));
     }).then(() => {
       o.quaternion.copy(base);
       o.position.copy(to);
-      dust(to, 14, 0.22, 0.6);
+      if (!land) { o.position.y = SLAB_TOP + HOVER; return; }
+      o.position.y = SLAB_TOP;
+      sfx('thud', o.position, 0.7);
+      rubble.puff(o.position, 7, 0.55, 0.12);
+      hooks.impact(o.position, 0.18);
     });
   }
 
-  function dust(at: THREE.Vector3, n: number, opacity: number, spread: number) {
-    const pos = new Float32Array(n * 3);
-    const vel: THREE.Vector3[] = [];
-    for (let i = 0; i < n; i++) {
-      const a = rand(0, Math.PI * 2);
-      pos.set([at.x + Math.cos(a) * 0.3, SLAB_TOP + rand(0.02, 0.12), at.z + Math.sin(a) * 0.3], i * 3);
-      vel.push(new THREE.Vector3(Math.cos(a) * rand(0.3, 1) * spread, rand(0.1, 0.5), Math.sin(a) * rand(0.3, 1) * spread));
-    }
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    const m = new THREE.PointsMaterial({ map: dustTex, color: '#9a8a76', size: 0.32, transparent: true, depthWrite: false, opacity });
-    const points = new THREE.Points(geo, m);
-    scene.add(points);
-    let age = 0;
-    effects.push(dt => {
-      age += dt;
-      for (let i = 0; i < n; i++) {
-        vel[i].multiplyScalar(0.95);
-        pos[i * 3] += vel[i].x * dt;
-        pos[i * 3 + 1] += vel[i].y * dt;
-        pos[i * 3 + 2] += vel[i].z * dt;
-      }
-      geo.attributes.position.needsUpdate = true;
-      m.opacity = opacity * Math.max(0, 1 - age / 1.4);
-      m.size = 0.32 + age * 0.5;
-      if (age < 1.4) return true;
-      scene.remove(points);
-      geo.dispose();
-      m.dispose();
-      return false;
+  /** The knight leaps: a high arc, a slam. `onImpact` fires as it comes down. */
+  function leap(o: THREE.Object3D, to: THREE.Vector3, dur: number, onImpact?: () => void) {
+    const from = o.position.clone();
+    const flat = new THREE.Vector3(to.x - from.x, 0, to.z - from.z).normalize();
+    const axis = up.clone().cross(flat);
+    const base = o.quaternion.clone();
+    let struck = false;
+    sfx('lift', o.position, 0.7, 0.8);
+    return tween(dur, k => {
+      const e = easeInOut(k);
+      o.position.lerpVectors(from, to, e);
+      o.position.y = from.y + (to.y - from.y) * e + Math.sin(Math.PI * e) * 1.0;
+      o.quaternion.copy(base).premultiply(lean.setFromAxisAngle(axis, 0.28 * Math.sin(Math.PI * e)));
+      if (onImpact && !struck && k > 0.86) { struck = true; onImpact(); }
+    }).then(() => {
+      o.quaternion.copy(base);
+      o.position.copy(to);
+      sfx('thud', o.position, 1, 0.8);
+      rubble.puff(o.position, 14, 1, 0.2);
+      hooks.impact(o.position, onImpact ? 0.5 : 0.35);
     });
   }
 
-  /** The captured piece bursts into stone: shards of its own material, bouncing, then gone. */
-  function shatter(victim: THREE.Object3D) {
-    const b = new THREE.Box3().setFromObject(victim);
-    const c = b.getCenter(new THREE.Vector3());
-    let material: THREE.Material | undefined;
-    victim.traverse(o => { if ((o as THREE.Mesh).isMesh) material = (o as THREE.Mesh).material as THREE.Material; });
-    group.remove(victim);
-    const shards = new THREE.Group();
-    scene.add(shards);
-    const parts = Array.from({ length: 46 }, () => {
-      const m = new THREE.Mesh(SHARD, material);
-      const s = new THREE.Vector3(rand(0.025, 0.085), rand(0.02, 0.07), rand(0.025, 0.08));
-      m.scale.copy(s);
-      m.position.set(rand(b.min.x, b.max.x) * 0.8 + c.x * 0.2, rand(b.min.y, b.max.y), rand(b.min.z, b.max.z) * 0.8 + c.z * 0.2);
-      m.rotation.set(rand(0, 6), rand(0, 6), rand(0, 6));
-      m.castShadow = true;
-      shards.add(m);
-      const height = (m.position.y - b.min.y) / (b.max.y - b.min.y + 1e-3);
-      const v = m.position.clone().sub(c).setY(0).normalize().multiplyScalar(rand(0.6, 2.4));
-      v.y = rand(0.8, 2.6) * height + 0.5;
-      return { m, s, v, w: new THREE.Vector3(rand(-9, 9), rand(-9, 9), rand(-9, 9)) };
-    });
-    dust(new THREE.Vector3(c.x, SLAB_TOP, c.z), 40, 0.42, 1.6);
-    let age = 0;
-    effects.push(dt => {
-      age += dt;
-      const fade = age < 2.2 ? 1 : Math.max(0, 1 - (age - 2.2) / 0.8);
-      for (const p of parts) {
-        p.v.y -= 9.8 * dt;
-        p.m.position.addScaledVector(p.v, dt);
-        const floor = SLAB_TOP + p.s.y * 0.7;
-        if (p.m.position.y < floor) {
-          p.m.position.y = floor;
-          p.v.y *= -0.25;
-          p.v.x *= 0.5;
-          p.v.z *= 0.5;
-          p.w.multiplyScalar(0.5);
-        }
-        p.m.rotation.x += p.w.x * dt;
-        p.m.rotation.y += p.w.y * dt;
-        p.m.rotation.z += p.w.z * dt;
-        p.m.scale.copy(p.s).multiplyScalar(fade);
-      }
-      if (age < 3) return true;
-      scene.remove(shards);
-      return false;
-    });
+  /** Break a placed piece: chunks of itself, thrown along the blow. */
+  function shatter(victim: THREE.Object3D, blow: THREE.Vector3, power: number) {
+    const { type, color } = victim.userData as { type: PieceSymbol; color: Color };
+    const at = victim.position.clone().setY(0.4);
+    rubble.burst(victim, type, STONE[color], blow, power);
+    sfx('crack', at, 1);
+    sfx('boom', at, 0.55 * power, 0.9 + Math.random() * 0.15);
+    sfx('crumble', at, 0.8, undefined);
+    hooks.impact(at, power);
   }
 
   async function play(m: Move) {
@@ -324,9 +281,15 @@ export function createBoard(scene: THREE.Scene, models: Models) {
     const victim = victimSq ? pieces.get(victimSq) ?? null : null;
     if (victimSq) pieces.delete(victimSq);
 
+    const to = squarePos(m.to as Square);
     const d = Math.hypot(m.to.charCodeAt(0) - m.from.charCodeAt(0), +m.to[1] - +m.from[1]);
-    const dur = 0.5 + 0.07 * d;
-    const jobs = [arc(mover, squarePos(m.to as Square), m.piece === 'n', dur, victim ? () => shatter(victim) : undefined)];
+    const blow = new THREE.Vector3(to.x - mover.position.x, 0, to.z - mover.position.z).normalize();
+    const jobs: Promise<void>[] = [];
+
+    if (m.piece === 'n') jobs.push(leap(mover, to, 0.75 + 0.05 * d, victim ? () => shatter(victim, blow, 1.25) : undefined));
+    else if (victim) jobs.push(strike(mover, victim, to, blow, d));
+    else jobs.push(glide(mover, to, 0.45 + 0.1 * d));
+
     if (m.flags.includes('k') || m.flags.includes('q')) {
       const rank = m.from[1];
       const [rf, rt] = (m.flags.includes('k') ? ['h', 'f'] : ['a', 'd']).map(f => (f + rank) as Square);
@@ -334,21 +297,78 @@ export function createBoard(scene: THREE.Scene, models: Models) {
       pieces.delete(rf);
       pieces.set(rt, rook);
       rook.userData.square = rt;
-      jobs.push(arc(rook, squarePos(rt), false, dur));
+      jobs.push(wait(120).then(() => glide(rook, squarePos(rt), 0.65)));
     }
     await Promise.all(jobs);
     pieces.set(m.to as Square, mover);
     mover.userData.square = m.to;
 
     if (m.promotion) {
-      group.remove(mover);
+      // The pawn bursts upward and the new piece rises out of its dust.
+      rubble.burst(mover, 'p', STONE[m.color], new THREE.Vector3(), 0.55);
+      sfx('crack', to, 0.7);
+      sfx('drum', to, 0.9, 1);
       const crowned = spawn(m.color, m.promotion, m.to as Square);
       crowned.scale.setScalar(0.001);
-      dust(squarePos(m.to as Square), 24, 0.35, 1);
-      await tween(0.5, k => crowned.scale.setScalar(Math.max(0.001, easeOutBack(k))));
+      rubble.puff(to, 16, 0.9, 0.4);
+      await tween(0.6, k => crowned.scale.setScalar(Math.max(0.001, easeOutBack(k))));
     }
   }
 
+  /** Approach, rear back, lunge: the victim breaks on contact. */
+  async function strike(mover: THREE.Object3D, victim: THREE.Object3D, to: THREE.Vector3, blow: THREE.Vector3, d: number) {
+    const stop = to.clone().addScaledVector(blow, -0.62);
+    await glide(mover, stop, 0.35 + 0.09 * Math.max(0, d - 0.62), false);
+    const axis = up.clone().cross(blow);
+    const base = mover.quaternion.clone();
+    const shake = victim.position.clone();
+    // Wind-up: the attacker rocks back, the victim shudders.
+    await tween(0.2, k => {
+      mover.quaternion.copy(base).premultiply(lean.setFromAxisAngle(axis, -0.16 * Math.sin(k * Math.PI / 2)));
+      victim.position.set(shake.x + rand(-1, 1) * 0.008 * k, shake.y, shake.z + rand(-1, 1) * 0.008 * k);
+    });
+    const from = mover.position.clone();
+    let struck = false;
+    await tween(0.16, k => {
+      const e = k * k;
+      mover.position.lerpVectors(from, to, e);
+      mover.position.y = SLAB_TOP + HOVER * (1 - e * 0.5);
+      mover.quaternion.copy(base).premultiply(lean.setFromAxisAngle(axis, -0.16 + 0.42 * e));
+      if (!struck && k > 0.55) { struck = true; shatter(victim, blow, 1.35); }
+    });
+    // Follow-through: it settles where the victim stood.
+    const top = mover.position.y;
+    await tween(0.34, k => {
+      const e = easeInOut(k);
+      mover.position.y = top + (SLAB_TOP - top) * e;
+      mover.quaternion.copy(base).premultiply(lean.setFromAxisAngle(axis, 0.26 * (1 - e)));
+    });
+    mover.quaternion.copy(base);
+    mover.position.copy(to);
+    sfx('thud', to, 0.8, 0.9);
+  }
+
+  /** Checkmate: the king trembles, then comes down where he stands. */
+  async function collapse(sq: Square) {
+    const king = pieces.get(sq);
+    if (!king) return;
+    pieces.delete(sq);
+    const p = king.position.clone();
+    sfx('grind', p, 0.8, 0.7);
+    await tween(0.9, k => {
+      const a = 0.004 + 0.018 * k * k;
+      king.position.set(p.x + rand(-a, a), p.y + rand(0, a * 0.5), p.z + rand(-a, a));
+      king.rotation.z = rand(-1, 1) * a * 0.6;
+    });
+    rubble.burst(king, 'k', STONE[king.userData.color as Color], new THREE.Vector3(), 0.45);
+    sfx('crack', p, 1, 0.8);
+    sfx('boom', p, 1, 0.75);
+    sfx('crumble', p, 1, 0.85);
+    rubble.puff(p, 30, 1.6, 0.5);
+    hooks.impact(p.clone().setY(0.5), 1.4);
+  }
+
+  const obstacles: Obstacle[] = [];
   return {
     setBoard,
     highlight,
@@ -356,18 +376,25 @@ export function createBoard(scene: THREE.Scene, models: Models) {
     lift,
     pick,
     play,
+    collapse,
+    setShards: rubble.setShards,
+    /** Footprints the walker can't pass through. */
+    solids: () => [...pieces.values()].map(o => ({ x: o.position.x, z: o.position.z, r: 0.36 })),
+    setDustColor: rubble.setDustColor,
+    setParticleScale: rubble.setScale,
     /** One of everything this board will ever draw, for the shader warm-up. */
     warmup(): THREE.Object3D[] {
-      const tile = new THREE.Mesh(TILE, tileMaterial());
-      const dustMat = new THREE.PointsMaterial({ map: dustTex, transparent: true, depthWrite: false });
-      return [tile, new THREE.Points(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array(3), 3)), dustMat)];
+      return [new THREE.Mesh(TILE, tileMaterial()), ...rubble.warmup()];
     },
     /** Advances the board's effects; true while anything is still moving. */
     update(dt: number) {
       clock += dt;
       for (const t of marks.children) ((t as THREE.Mesh).material as THREE.ShaderMaterial).uniforms.uTime.value = clock;
       for (let i = effects.length - 1; i >= 0; i--) if (!effects[i](dt)) effects.splice(i, 1);
-      const changed = dirty || effects.length > 0;
+      obstacles.length = 0;
+      for (const o of pieces.values()) obstacles.push({ x: o.position.x, z: o.position.z, r: 0.3, h: o.position.y + o.userData.h });
+      const rubbleBusy = rubble.update(dt, obstacles);
+      const changed = dirty || rubbleBusy || effects.length > 0;
       dirty = false;
       return changed;
     },

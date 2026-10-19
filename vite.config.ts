@@ -4,6 +4,6 @@ import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
-  // Asset folders rewritten by the Blender and audio pipelines shouldn't reload the page.
-  server: { watch: { ignored: ['**/public/audio/**', '**/public/models/**', '**/blender/**'] } },
+  // Blender's working files churn during bakes; they're not served, don't watch them.
+  server: { watch: { ignored: ['**/blender/**'] } },
 });

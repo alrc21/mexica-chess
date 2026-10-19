@@ -37,7 +37,7 @@ export default function App() {
         game.current.view();
         if (import.meta.env.DEV) Object.assign(window, { __game: game.current, __stage: stage });
       },
-      onSquare: hit => game.current?.click(hit),
+      onSquare: hit => game.current?.click(hit) ?? false,
       onHover: hit => game.current?.hover(hit),
     });
     return () => { dispose(); engine.dispose(); };

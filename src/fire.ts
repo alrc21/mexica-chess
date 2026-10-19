@@ -76,7 +76,8 @@ const emberMaterial = () => new THREE.ShaderMaterial({
   blending: THREE.AdditiveBlending,
 });
 
-export type Fire = { group: THREE.Group; update: (t: number, camera: THREE.Camera) => void };
+/** `glow` scales the light it throws, `flame` the flames themselves (both lower by day). */
+export type Fire = { group: THREE.Group; light: THREE.PointLight; update: (t: number, camera: THREE.Camera, glow?: number, flame?: number) => void };
 
 export function createFire(seed: number, size = 1): Fire {
   const group = new THREE.Group();
@@ -84,6 +85,7 @@ export function createFire(seed: number, size = 1): Fire {
   const billboard = new THREE.Group();
   const card = (w: number, h: number, x: number, z: number, s: number, intensity: number) => {
     const m = new THREE.Mesh(new THREE.PlaneGeometry(w * size, h * size).translate(0, h * size * 0.48, 0), flameMaterial(s, intensity));
+    m.userData.intensity = intensity;
     m.position.set(x * size, 0, z);
     billboard.add(m);
   };
@@ -116,13 +118,18 @@ export function createFire(seed: number, size = 1): Fire {
   const world = new THREE.Vector3();
   return {
     group,
-    update(t, camera) {
+    light,
+    update(t, camera, glow = 1, flame = 1) {
       group.getWorldPosition(world);
       billboard.rotation.y = Math.atan2(camera.position.x - world.x, camera.position.z - world.z);
-      for (const c of billboard.children) ((c as THREE.Mesh).material as THREE.ShaderMaterial).uniforms.uTime.value = t;
+      for (const c of billboard.children) {
+        const u = ((c as THREE.Mesh).material as THREE.ShaderMaterial).uniforms;
+        u.uTime.value = t;
+        u.uIntensity.value = c.userData.intensity * flame;
+      }
       embers.material.uniforms.uTime.value = t + seed * 3;
       // Breathing, not strobing: two slow sines and a faster flutter.
-      light.intensity = 40 * (0.82 + 0.1 * Math.sin(t * 2.3 + seed) + 0.06 * Math.sin(t * 7.1 + seed * 2) + 0.04 * Math.sin(t * 13.7));
+      light.intensity = 40 * glow * (0.82 + 0.1 * Math.sin(t * 2.3 + seed) + 0.06 * Math.sin(t * 7.1 + seed * 2) + 0.04 * Math.sin(t * 13.7));
     },
   };
 }

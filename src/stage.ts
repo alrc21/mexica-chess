@@ -6,11 +6,14 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
-import type { Color, PieceSymbol, Square } from 'chess.js';
+import type { Color, Move, PieceSymbol, Square } from 'chess.js';
 import { advance, animating, easeInOut, tween } from './anim';
-import { createBoard, squarePos, type Board, type Hit, type Models } from './board';
+import { createAtmosphere } from './atmosphere';
+import { createAudio, type Audio, type Loop } from './audio';
+import { createBoard, squarePos, SLAB_TOP, type Board, type Hit, type Models } from './board';
 import { createFire, type Fire } from './fire';
 import { MODEL, STONE } from './lore';
+import { createWalk, type Solid } from './walk';
 
 type Stone = 'tezontle' | 'basalt' | 'cantera' | 'andesite';
 
@@ -44,64 +47,7 @@ uniform float grainStrength;`)
   mat.customProgramCacheKey = () => 'grain';
 }
 
-/**
- * What the stone reflects: near-black with a few light cards — braziers, a
- * dim strip of night sky, a rim. Burnished basalt reads black with clean
- * highlights instead of mirroring a bright photo studio.
- */
-function lightformers() {
-  const env = new THREE.Scene();
-  env.background = new THREE.Color('#030303');
-  const card = (color: string, intensity: number, w: number, h: number, x: number, y: number, z: number) => {
-    const m = new THREE.Mesh(
-      new THREE.PlaneGeometry(w, h),
-      new THREE.MeshBasicMaterial({ color: new THREE.Color(color).multiplyScalar(intensity), side: THREE.DoubleSide }),
-    );
-    m.position.set(x, y, z);
-    m.lookAt(0, 0, 0);
-    env.add(m);
-  };
-  card('#ff9447', 7, 1.2, 1.6, -4, 1.2, 2.6);
-  card('#ff8236', 3, 1.0, 1.2, 4.6, 0.8, -2.2);
-  card('#efe6da', 0.9, 7, 1.2, 0, 6, 0);
-  card('#f3ece4', 2.2, 3.2, 0.5, 2.2, 2.4, -5);
-  return env;
-}
-
-const HORIZON = '#100d0b';
-
-/** Night sky: a warm haze at the horizon going black overhead, a few faint stars. */
-function sky() {
-  return new THREE.Mesh(
-    new THREE.SphereGeometry(180, 32, 16),
-    new THREE.ShaderMaterial({
-      side: THREE.BackSide,
-      depthWrite: false,
-      fog: false,
-      uniforms: { uHorizon: { value: new THREE.Color(HORIZON) } },
-      vertexShader: /* glsl */ `
-        varying vec3 vDir;
-        void main() { vDir = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
-      fragmentShader: /* glsl */ `
-        uniform vec3 uHorizon;
-        varying vec3 vDir;
-        float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
-        void main() {
-          vec3 d = normalize(vDir);
-          vec3 c = mix(uHorizon, vec3(0.006, 0.006, 0.007), smoothstep(-0.02, 0.45, d.y));
-          vec2 g = vec2(atan(d.z, d.x) * 140.0, d.y * 140.0);
-          vec2 cell = floor(g);
-          vec2 at = vec2(hash(cell), hash(cell + 7.3));
-          float star = step(0.986, hash(cell + 3.1)) * smoothstep(0.32, 0.0, length(fract(g) - at));
-          c += vec3(0.75, 0.72, 0.66) * star * smoothstep(0.08, 0.4, d.y) * (0.35 + 0.65 * hash(cell + 9.1));
-          gl_FragColor = vec4(c, 1.0);
-        }`,
-    }),
-  );
-}
-
 // Board space: files a–h run along +x, rank 1 is nearest +z (tezontle).
-const at = (file: number, rank: number) => new THREE.Vector3(file - 3.5, 0, 3.5 - rank);
 const BRAZIER = { scale: 2.2, inset: 6.8 };
 const MONUMENT = { scale: 14, z: -27 };
 
@@ -111,10 +57,19 @@ const V = (p: [number, number, number], l: [number, number, number], fov: number
 
 export type Stage = {
   board: Board;
+  audio: Audio;
   /** Fly from wherever the camera is to a side's playing view. */
   toGame(side: Color): Promise<void>;
   /** Back to the slow drift in front of the Templo Mayor. */
   toIntro(): Promise<void>;
+  /** Plays a move; a blow that matters gets a cut to a low, close camera. */
+  play(move: Move): Promise<void>;
+  /** Checkmate: the king comes down, watched up close. */
+  collapse(sq: Square): Promise<void>;
+  /** Down among the pieces on foot, or back up to the overview. */
+  setWalking(on: boolean): Promise<void>;
+  /** Night or day, as a slow change of the hour. */
+  setDay(on: boolean): Promise<void>;
   setCursor(pointer: boolean): void;
   /** Where a square's centre lands on screen, in CSS pixels (used by the browser tests). */
   project(sq: Square, height?: number): { x: number; y: number };
@@ -122,7 +77,8 @@ export type Stage = {
 
 export type StageEvents = {
   onReady(stage: Stage): void;
-  onSquare(hit: Hit): void;
+  /** A click on the board. Return true if the game used it; otherwise, on foot, we walk there. */
+  onSquare(hit: Hit): boolean;
   onHover(hit: Hit): void;
 };
 
@@ -138,12 +94,7 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
   renderer.shadowMap.autoUpdate = false; // re-rendered only while stone moves
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(HORIZON);
-  scene.fog = new THREE.Fog(HORIZON, 16, 72);
-  scene.add(sky());
-  const pmrem = new THREE.PMREMGenerator(renderer);
-  scene.environment = pmrem.fromScene(lightformers(), 0.02).texture;
-  scene.environmentIntensity = 0.9;
+  const atmo = createAtmosphere(scene, renderer, MONUMENT.z);
 
   const camera = new THREE.PerspectiveCamera(30, 1, 0.1, 400);
   const controls = new OrbitControls(camera, canvas);
@@ -154,26 +105,21 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
   controls.maxPolarAngle = 1.32;
   controls.enabled = false;
 
-  // ── Light: a stage pool on the board, warm fire around, a cold rim behind ──
-  const key = new THREE.SpotLight('#fff0dc', 420, 0, 0.56, 0.6, 2);
-  key.position.set(-3.2, 13, 5.5);
-  key.target.position.set(0, 0, 0);
-  key.castShadow = true;
-  key.shadow.mapSize.set(4096, 4096);
-  key.shadow.bias = -0.0002;
-  key.shadow.normalBias = 0.02;
-  key.shadow.radius = 3;
-  scene.add(key, key.target);
-  const rim = new THREE.DirectionalLight('#c4cee2', 1.8);
-  rim.position.set(3, 9, -12);
-  const fill = new THREE.DirectionalLight('#ffe6cc', 0.55); // from the player's seat, so faces never go to mud
-  fill.position.set(2, 6, 12);
-  scene.add(rim, fill);
-  // The monument's face, lit from the plaza like a floodlit ruin.
-  const flood = new THREE.SpotLight('#ffb878', 1100, 0, 0.38, 0.9, 2);
-  flood.position.set(0, 0.3, -11);
-  flood.target.position.set(0, 5, MONUMENT.z);
-  scene.add(flood, flood.target);
+  // ── Sound: opened by the first gesture, then the fire and the night begin ─
+  const audio = createAudio();
+  const ambience: { night: Loop | null; day: Loop | null } = { night: null, day: null };
+  const fireSpots: THREE.Vector3[] = [];
+  const unlock = () => {
+    if (audio.started) return;
+    audio.unlock();
+    for (const p of fireSpots) audio.fade(audio.loop('fire-loop', p, 1.6), 0.6, 2);
+    ambience.night = audio.loop('night-loop');
+    ambience.day = audio.loop('day-loop');
+    audio.fade(ambience.night, 0.5 * (1 - atmo.state.k), 3);
+    audio.fade(ambience.day, 0.45 * atmo.state.k, 3);
+  };
+  addEventListener('pointerdown', unlock);
+  addEventListener('keydown', unlock);
 
   // ── Textures ──────────────────────────────────────────────────────────────
   const textures = new THREE.TextureLoader();
@@ -188,7 +134,7 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
   };
   const grain = { tezontle: tile('/textures/grain-tezontle.jpg', 1), basalt: tile('/textures/grain-basalt.jpg', 1) };
 
-  // ── Plaza: scanned flagstones running into the dark ───────────────────────
+  // ── Plaza: scanned flagstones running into the haze ───────────────────────
   const plaza = new THREE.Mesh(
     new THREE.PlaneGeometry(200, 200),
     new THREE.MeshStandardMaterial({
@@ -238,12 +184,16 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
     fire.group.position.copy(p).setY(0.8 * scale);
     scene.add(fire.group);
     fires.push(fire);
+    fireSpots.push(fire.group.position);
   };
+  const BRAZIERS: Solid[] = [[-1, 1], [1, 1], [1, -1], [-1, -1]].map(([sx, sz]) => ({ x: sx * BRAZIER.inset, z: sz * BRAZIER.inset, r: 0.8 }));
 
   let board: Board | null = null;
   let disposed = false;
 
-  // ── Camera: a slow drift before the pyramid, then a flight to the board ───
+  // ── Camera ────────────────────────────────────────────────────────────────
+  // intro: a slow drift before the pyramid · orbit: the player's overview ·
+  // walk: on foot · scripted: a tween owns the camera (flights, cinematics).
   const narrow = () => camera.aspect < 0.8;
   const INTRO = () => narrow()
     ? V([0, 1.9, 9.5], [0, 5.2, MONUMENT.z], 48)
@@ -252,9 +202,12 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
     const s = side === 'w' ? 1 : -1;
     return narrow() ? V([0, 17.2, 12.6 * s], [0, 0, 1.5 * s], 52) : V([0, 8.4, 11.2 * s], [0, 0, 1.25 * s], 30);
   };
-  let mode: 'intro' | 'flying' | 'game' = 'intro';
+  const WALK_FOV = () => (narrow() ? 74 : 62);
+  let mode: 'intro' | 'orbit' | 'walk' | 'scripted' = 'intro';
+  let walking = false;
   let side: Color = 'w';
   const look = new THREE.Vector3();
+  const fwd = new THREE.Vector3();
   const setView = (v: View) => {
     camera.position.copy(v.pos);
     look.copy(v.look);
@@ -262,14 +215,20 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
     camera.fov = v.fov;
     camera.updateProjectionMatrix();
   };
+  /** Where the camera is looking right now, whoever drives it. */
+  const currentLook = () => {
+    if (mode === 'orbit') return controls.target.clone();
+    if (mode === 'walk') return camera.getWorldDirection(fwd).multiplyScalar(2).add(camera.position);
+    return look.clone();
+  };
 
-  async function fly(to: View, dur: number) {
-    mode = 'flying';
+  async function fly(to: View, dur: number, rise = 2.6) {
+    const l0 = currentLook();
+    mode = 'scripted';
     controls.enabled = false;
     const p0 = camera.position.clone();
-    const l0 = look.clone();
     const f0 = camera.fov;
-    const mid = p0.clone().lerp(to.pos, 0.5).add(new THREE.Vector3(0, 2.6, 0)); // rise over the board
+    const mid = p0.clone().lerp(to.pos, 0.5).add(new THREE.Vector3(0, rise, 0));
     const q = new THREE.Vector3();
     await tween(dur, k => {
       const e = easeInOut(k);
@@ -281,21 +240,134 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
       camera.updateProjectionMatrix();
     });
   }
+  const toOrbit = (v: View) => {
+    controls.target.copy(v.look);
+    controls.enabled = true;
+    mode = 'orbit';
+  };
+  const setNear = (near: number) => { camera.near = near; camera.updateProjectionMatrix(); };
+
+  const walk = createWalk(camera, () => [...(board?.solids() ?? []), ...BRAZIERS], (_at, run) => audio.play('step', { gain: run ? 0.55 : 0.4 }));
+  async function walkIn() {
+    const s = side === 'w' ? 1 : -1;
+    const stand = new THREE.Vector3(0.5, 0, 0.6 * s); // between the armies
+    const ahead = new THREE.Vector3(0.5, 0.55, -3.5 * s); // facing the enemy line
+    setNear(0.02);
+    await fly({ pos: walk.eyeAt(stand), look: ahead, fov: WALK_FOV() }, 2.2, 1.2);
+    walk.place(stand, ahead);
+    walk.start();
+    mode = 'walk';
+  }
+  async function walkOut() {
+    walk.stop();
+    await fly(GAME(side), 2, 2.2);
+    setNear(0.1);
+    toOrbit(GAME(side));
+  }
+
+  // ── Blows: camera shake, a beat of slow motion, a flare of bloom ─────────
+  let trauma = 0;
+  let slowAt = -10;
+  let flare = 0;
+  let now = 0;
+  const impact = (at: THREE.Vector3, power: number) => {
+    const d = camera.position.distanceTo(at);
+    trauma = Math.min(1, trauma + (power * 0.6) / (1 + d * 0.06));
+    if (power >= 1) { slowAt = now; flare = 0.35; }
+  };
+  const timeScale = () => {
+    const s = now - slowAt;
+    return s > 1.05 ? 1 : 0.2 + 0.8 * THREE.MathUtils.smoothstep(s, 0.3, 1.05);
+  };
+
+  /**
+   * A low witness camera on the blow. Tries a ring of angles around the
+   * target and keeps the one with the fewest pieces in the way, preferring a
+   * side-on view from the half of the board the player already looks from.
+   */
+  function witness(target: THREE.Vector3, along: THREE.Vector3, skip: THREE.Vector3[] = []): View {
+    const far = narrow() ? 3.4 : 2.5;
+    const eye = target.clone().setY(0.4);
+    const sideways = new THREE.Vector3(-along.z, 0, along.x);
+    if (sideways.dot(camera.position.clone().sub(target)) < 0) sideways.negate();
+    const solids = (board?.solids() ?? []).filter(s => skip.every(k => Math.hypot(s.x - k.x, s.z - k.z) > 0.3));
+    let best: THREE.Vector3 | null = null;
+    let bestScore = Infinity;
+    for (let i = 0; i < 16; i++) {
+      const a = (i / 16) * Math.PI * 2;
+      const dir = sideways.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), a);
+      for (const h of [0.9, 1.5]) {
+        const pos = target.clone().addScaledVector(dir, far).setY(h);
+        let blocked = 0;
+        for (const s of solids) {
+          // Closest approach of the sight line to the piece's axis, and the line's height there.
+          const t = THREE.MathUtils.clamp(((s.x - pos.x) * (eye.x - pos.x) + (s.z - pos.z) * (eye.z - pos.z)) / (far * far), 0, 1);
+          const x = pos.x + (eye.x - pos.x) * t, z = pos.z + (eye.z - pos.z) * t, y = pos.y + (eye.y - pos.y) * t;
+          if (Math.hypot(x - s.x, z - s.z) < s.r + 0.1 && y < 1.1) blocked++;
+        }
+        const score = blocked * 10 + (1 - Math.cos(a)) * 1.5 + (h > 1 ? 0.6 : 0) + (Math.abs(pos.x) > 7 || Math.abs(pos.z) > 7 ? 5 : 0);
+        if (score < bestScore) { bestScore = score; best = pos; }
+      }
+    }
+    return { pos: best!, look: target.clone().add(new THREE.Vector3(0, 0.38, 0)), fov: narrow() ? 50 : 36 };
+  }
+  async function cinematic(focus: THREE.Vector3, along: THREE.Vector3, action: () => Promise<void>, lead = 0.25, skip: THREE.Vector3[] = []) {
+    const back: View = { pos: camera.position.clone(), look: controls.target.clone(), fov: camera.fov };
+    const flight = fly(witness(focus, along, skip), 0.8, 0.35);
+    await tween(lead, () => {});
+    await Promise.all([flight, action()]);
+    await tween(0.8, () => {}); // watch the rubble
+    await fly(back, 0.9, 0.3);
+    toOrbit(back);
+  }
 
   const stage: Stage = {
     get board() { return board!; },
+    audio,
     async toGame(s) {
       side = s;
-      if (mode === 'game') look.copy(controls.target); // flying from wherever the player left it
+      walking = false;
+      walk.stop();
       await fly(GAME(s), 2.8);
-      controls.target.copy(GAME(s).look);
-      controls.enabled = true;
-      mode = 'game';
+      setNear(0.1);
+      toOrbit(GAME(s));
     },
     async toIntro() {
-      if (mode === 'game') look.copy(controls.target);
+      walking = false;
+      walk.stop();
       await fly(INTRO(), 2.4);
+      setNear(0.1);
       mode = 'intro';
+    },
+    play(move) {
+      const b = board!;
+      const big = !!move.captured && move.captured !== 'p';
+      if (mode !== 'orbit' || !big) return b.play(move);
+      const to = squarePos(move.to as Square);
+      const from = squarePos(move.from as Square);
+      const along = to.clone().sub(from).setY(0).normalize();
+      // The attacker's own path is not in the way: it's the subject.
+      const path = [from, from.clone().lerp(to, 0.5), to];
+      return cinematic(from.clone().lerp(to, 0.7), along, () => b.play(move), 0.25, path);
+    },
+    collapse(sq) {
+      const b = board!;
+      if (mode !== 'orbit') return b.collapse(sq);
+      const at = squarePos(sq);
+      const along = new THREE.Vector3(0, 0, side === 'w' ? -1 : 1);
+      return cinematic(at, along, () => b.collapse(sq), 0.5, [at]);
+    },
+    async setWalking(on) {
+      if (on === walking) return;
+      walking = on;
+      if (on) await walkIn(); else await walkOut();
+    },
+    async setDay(on) {
+      const k0 = atmo.state.k;
+      const k1 = on ? 1 : 0;
+      audio.fade(ambience.night, 0.5 * (1 - k1), 2.4);
+      audio.fade(ambience.day, 0.45 * k1, 2.4);
+      await tween(2.6, k => atmo.set(k0 + (k1 - k0) * easeInOut(k)));
     },
     setCursor(pointer) { canvas.style.cursor = pointer ? 'pointer' : ''; },
     project(sq, height = 0) {
@@ -323,7 +395,7 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
     for (let f = 0; f < 8; f++) {
       for (let r = 0; r < 8; r++) {
         const h = (f * 73 + r * 151 + f * r * 31) % 97;
-        place(slabs[(f + r) % 2 === 1 ? 0 : 1][h % 3], at(f, r), (h % 4) * Math.PI / 2)
+        place(slabs[(f + r) % 2 === 1 ? 0 : 1][h % 3], new THREE.Vector3(f - 3.5, 0, 3.5 - r), (h % 4) * Math.PI / 2)
           .traverse(o => { o.castShadow = false; }); // flat: nothing to cast
       }
     }
@@ -334,8 +406,8 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
       place(corner, new THREE.Vector3(4.3, 0, 4.25), 0, 1, edge);
       scene.add(edge);
     }
-    [[-1, 1], [1, 1], [1, -1], [-1, -1]].forEach(([sx, sz], i) => {
-      const p = new THREE.Vector3(sx * BRAZIER.inset, 0, sz * BRAZIER.inset);
+    BRAZIERS.forEach((b, i) => {
+      const p = new THREE.Vector3(b.x, 0, b.z);
       place(brazier, p, i * 0.7, BRAZIER.scale);
       light(p, BRAZIER.scale, i * 1.37 + 0.4);
     });
@@ -350,7 +422,7 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
 
     const models = { w: {}, b: {} } as Models;
     (['w', 'b'] as Color[]).forEach((c, i) => kinds.forEach((k, j) => { models[c][k] = pieces[i][j]; }));
-    board = createBoard(scene, models);
+    board = createBoard(scene, models, (name, at, gain, rate) => audio.play(name, { at, gain, rate }), { impact });
     // Compile every shader now, behind the curtain, not on the first click.
     const warm = board.warmup();
     scene.add(...warm);
@@ -358,35 +430,73 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
     scene.remove(...warm);
     renderer.shadowMap.needsUpdate = true;
     events.onReady(stage);
+
+    // The fractured pieces come after the first frame: nobody captures in the first seconds.
+    const interior = {
+      tezontle: new THREE.MeshStandardMaterial({ color: '#4f2218', roughness: 1, normalMap: grain.tezontle, normalScale: new THREE.Vector2(1.4, 1.4) }),
+      basalt: new THREE.MeshStandardMaterial({ color: '#24221f', roughness: 0.88, normalMap: grain.basalt, normalScale: new THREE.Vector2(1, 1) }),
+    };
+    const shards = {} as Record<PieceSymbol, THREE.Object3D>;
+    await Promise.all(kinds.map(async k => { shards[k] = (await gltf.loadAsync(`/models/shards/${MODEL[k]}.glb`)).scene; }));
+    if (disposed) return;
+    board.setShards(shards, interior);
+    // Warm their programs (and instanced grit) without blocking a frame.
+    const sample = shards.p.clone();
+    const pieceMat = (pieces[0][0].getObjectByProperty('isMesh', true) as THREE.Mesh).material as THREE.Material;
+    sample.traverse(o => { const m = o as THREE.Mesh; if (m.isMesh) m.material = (m.material as THREE.Material).name === 'interior' ? interior.tezontle : pieceMat; });
+    const grit = new THREE.InstancedMesh(new THREE.DodecahedronGeometry(1, 0), pieceMat, 1);
+    sample.position.y = -5;
+    grit.position.y = -5;
+    scene.add(sample, grit);
+    await renderer.compileAsync(scene, camera);
+    scene.remove(sample, grit);
   })();
 
   // ── Post: bloom only catches what burns ───────────────────────────────────
   // The composer's own target has no MSAA; give it one on low-density screens.
   const composer = new EffectComposer(renderer, new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: dpr < 1.5 ? 4 : 0 }));
   composer.addPass(new RenderPass(scene, camera));
-  composer.addPass(new UnrealBloomPass(new THREE.Vector2(1, 1), 0.42, 0.3, 1.0));
+  const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.42, 0.3, 1.0);
+  composer.addPass(bloom);
   composer.addPass(new OutputPass());
 
   // ── Pointer: a click is a press that didn't become a drag ─────────────────
+  // Orbit drags belong to OrbitControls; on foot a drag turns your head.
   const ndc = new THREE.Vector2();
-  let down: { x: number; y: number } | null = null;
+  let down: { x: number; y: number; lx: number; ly: number; moved: number } | null = null;
   let hovered = '';
   const toNdc = (e: PointerEvent) => {
     const r = canvas.getBoundingClientRect();
     ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
   };
-  const onDown = (e: PointerEvent) => { down = { x: e.clientX, y: e.clientY }; };
+  const ray = new THREE.Raycaster();
+  const ground = new THREE.Plane(new THREE.Vector3(0, 1, 0), -SLAB_TOP);
+  const onDown = (e: PointerEvent) => {
+    down = { x: e.clientX, y: e.clientY, lx: e.clientX, ly: e.clientY, moved: 0 };
+    if (mode === 'walk') canvas.setPointerCapture(e.pointerId);
+  };
   const onUp = (e: PointerEvent) => {
-    if (!down || mode !== 'game' || !board) return;
-    const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y);
+    const d = down;
     down = null;
-    if (moved > 6) return;
+    if (!d || !board || (mode !== 'orbit' && mode !== 'walk')) return;
+    if (d.moved > 6) return;
     toNdc(e);
-    events.onSquare(board.pick(ndc, camera));
+    const used = events.onSquare(board.pick(ndc, camera));
+    if (!used && mode === 'walk') {
+      ray.setFromCamera(ndc, camera);
+      const p = ray.ray.intersectPlane(ground, new THREE.Vector3());
+      if (p) walk.walkTo(p);
+    }
   };
   // Hover picks once per frame at most, however fast the trackpad reports.
   let hoverDirty = false;
   const onMove = (e: PointerEvent) => {
+    if (down) {
+      down.moved = Math.max(down.moved, Math.hypot(e.clientX - down.x, e.clientY - down.y));
+      if (mode === 'walk' && down.moved > 4) walk.look(e.clientX - down.lx, e.clientY - down.ly);
+      down.lx = e.clientX;
+      down.ly = e.clientY;
+    }
     if (e.pointerType !== 'mouse') return;
     toNdc(e);
     hoverDirty = true;
@@ -394,6 +504,7 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
   const onLeave = () => { hovered = ''; events.onHover({ piece: null, ground: null }); };
   canvas.addEventListener('pointerdown', onDown);
   canvas.addEventListener('pointerup', onUp);
+  canvas.addEventListener('pointercancel', onUp);
   canvas.addEventListener('pointermove', onMove);
   canvas.addEventListener('pointerleave', onLeave);
 
@@ -404,11 +515,12 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
     composer.setSize(w, h);
     camera.aspect = w / h;
     if (mode === 'intro') setView(INTRO());
-    if (mode === 'game') {
+    if (mode === 'orbit') {
       const v = GAME(side);
       camera.fov = v.fov;
       controls.target.copy(v.look);
     }
+    if (mode === 'walk') camera.fov = WALK_FOV();
     camera.updateProjectionMatrix();
   };
   const ro = new ResizeObserver(resize);
@@ -418,7 +530,7 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
   const q = new URLSearchParams(location.search);
   const pin = q.get('cam')?.split(',').map(Number);
   if (pin?.length === 3) {
-    mode = 'game';
+    mode = 'orbit';
     camera.position.set(pin[0], pin[1], pin[2]);
     controls.target.fromArray(q.get('look')?.split(',').map(Number) ?? [0, 0.3, 0]);
     controls.enabled = true;
@@ -438,17 +550,21 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
     }
   };
 
+  const shakePos = new THREE.Vector3();
+  const shakeQuat = new THREE.Quaternion();
   const timer = new THREE.Timer();
   renderer.setAnimationLoop(() => {
     timer.update();
     const raw = timer.getDelta();
     if (board && !document.hidden) adapt(Math.min(raw, 0.1));
-    const dt = Math.min(raw, 1 / 20);
+    const real = Math.min(raw, 1 / 20);
+    now += real;
+    const dt = real * timeScale();
     const t = timer.getElapsed();
     advance(dt);
     const moving = board?.update(dt);
     if (moving || animating()) renderer.shadowMap.needsUpdate = true;
-    if (hoverDirty && mode === 'game' && board) {
+    if (hoverDirty && (mode === 'orbit' || mode === 'walk') && board) {
       hoverDirty = false;
       const hit = board.pick(ndc, camera);
       const key = `${hit.piece}${hit.ground}`;
@@ -460,22 +576,50 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
       camera.position.copy(v.pos).add(new THREE.Vector3(Math.sin(t * 0.09) * 0.9, Math.sin(t * 0.06) * 0.18, -Math.sin(t * 0.04) * 0.6));
       look.copy(v.look);
       camera.lookAt(look);
-    } else if (mode === 'game') controls.update();
-    for (const f of fires) f.update(t, camera);
-    composer.render();
+    } else if (mode === 'orbit') controls.update();
+    else if (mode === 'walk') walk.update(real);
+
+    const s = atmo.state;
+    renderer.toneMappingExposure = s.exposure;
+    flare *= Math.exp(-real * 3);
+    bloom.strength = s.bloom + flare;
+    for (const f of fires) f.update(t, camera, s.fire, 1 - 0.3 * s.k);
+    board?.setDustColor(s.dust);
+    board?.setParticleScale(renderer.domElement.height / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2)));
+    audio.listen(camera);
+
+    // Shake rides on top of whatever drives the camera, and comes off after the frame.
+    trauma = Math.max(0, trauma - real * 1.5);
+    const amp = trauma * trauma;
+    if (amp > 1e-4) {
+      shakePos.copy(camera.position);
+      shakeQuat.copy(camera.quaternion);
+      const n = (f: number, o: number) => Math.sin(now * f + o) * 0.6 + Math.sin(now * f * 2.3 + o * 1.7) * 0.4;
+      const reach = mode === 'walk' ? 0.012 : 0.06;
+      camera.translateX(n(37, 0) * amp * reach);
+      camera.translateY(n(41, 2) * amp * reach);
+      camera.rotateZ(n(29, 5) * amp * 0.012);
+      composer.render();
+      camera.position.copy(shakePos);
+      camera.quaternion.copy(shakeQuat);
+    } else composer.render();
   });
 
   return () => {
     disposed = true;
     renderer.setAnimationLoop(null);
+    removeEventListener('pointerdown', unlock);
+    removeEventListener('keydown', unlock);
     canvas.removeEventListener('pointerdown', onDown);
     canvas.removeEventListener('pointerup', onUp);
+    canvas.removeEventListener('pointercancel', onUp);
     canvas.removeEventListener('pointermove', onMove);
     canvas.removeEventListener('pointerleave', onLeave);
+    walk.stop();
     ro.disconnect();
     controls.dispose();
     composer.dispose();
-    pmrem.dispose();
+    atmo.dispose();
     renderer.dispose();
   };
 }
