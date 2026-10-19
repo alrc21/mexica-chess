@@ -9,7 +9,7 @@ import * as THREE from 'three';
 export type Solid = { x: number; z: number; r: number };
 
 // Board units (a square is 1): at this height the pieces read as monuments. ?eye= tunes it.
-export const EYE = Number(new URLSearchParams(location.search).get('eye')) || 0.16;
+export const EYE = Number(new URLSearchParams(location.search).get('eye')) || 0.12;
 const SPEED = { walk: 0.42, run: 1.05, tap: 0.75 };
 const BOUND = 9.5; // stay on this side of the Templo Mayor
 const SLAB_TOP = 0.06;

@@ -48,15 +48,39 @@ Each phase ends with before/after screenshots in `docs/evidence/`.
 - [x] **Intro.** The Templo Mayor stands monumental across the plaza
   between two braziers; the camera drifts before it, then flies over the
   board on Play.
-- [ ] **4. Polish.** The Templo Mayor on the horizon, stone-on-stone foley
-  (CC0, not synthesised), KTX2 textures, LODs for the pawns, a performance
-  pass on mobile, deployment.
+- [x] **4a. Feel.** Picking by triangles, with a legal target on the ground
+  beating the stone that hides it; whole-square path tiles that light up in a
+  wave from the piece; selection allowed while the machine thinks; a click
+  mid-animation is queued; stale engine replies discarded (they used to
+  freeze the game after Undo); shadows re-rendered only while stone moves;
+  shaders warmed behind the curtain; adaptive resolution.
+- [x] **4b. Drama.** Pieces pre-fractured in Blender (`blender/fracture.py`)
+  into convex chunks of their own baked mesh; a capture is an approach, a
+  rear-back and a lunge, the victim breaks on contact into chunks that tumble,
+  knock against the standing pieces and settle, with grit, sparks and dust;
+  camera shake, a beat of slow motion and a bloom flare on every blow; a
+  cinematic witness camera (the clearest of 32 angles) on major captures and
+  the mate; the mated king trembles and comes down.
+- [x] **4c. Sound.** CC0 field recordings (`public/audio/CREDITS.txt`):
+  grinding, thuds, cracks, rubble, footsteps, fire, night and day ambience, a
+  drum on check, a conch at the start and on mate. Spatial: the listener
+  rides the camera.
+- [x] **4d. Day and on foot.** Night/Day as a slow change of the hour (sun,
+  sky, haze, Popocatépetl and Iztaccíhuatl on the skyline, the UI flips to
+  ink). Walk the board at a person's eye height: drag to look, WASD or tap
+  the ground, pieces and braziers are solid, and you can play from there.
+- [ ] **5. Ship.** KTX2 textures, LODs for the pawns, a real-iPhone pass,
+  deployment.
 
 ## Budgets
 
 - Download: under 15 MB of models (12 piece sets plus the board).
 - Pieces: 13–20k tris each; pawns 10k (16 instances). About 750k tris in the full scene.
 - Frame: 60 fps on an M-series laptop, 30+ fps on a recent iPhone.
+  Measured 2026-10-19, headless Chrome on Apple Silicon, 1440×900 @2x,
+  vsync off: intro 112, game 83, on foot 113, on foot by day 115.
+- Fractured pieces: 4.1 MB, loaded after the first frame.
+- Sound: 1.7 MB, loaded on the first gesture.
 
 ## Open items (needs input)
 
@@ -72,4 +96,9 @@ python3 blender/fetch.py        # CC0 scans, once
 npm run piece -- rook           # Blender bake → public/models (SHIP_ONLY=1 skips the bake)
 npm run dev                     # http://localhost:3100
 node scripts/shoot.mjs <dir> http://localhost:3100 /   # desktop + mobile shots
+node scripts/click.mjs <dir>    # real clicks on projected squares (picking)
+node scripts/drama.mjs <dir>    # capture + mate, shot as a strip
+node scripts/views.mjs <dir>    # intro/board by day, on foot by day and night
+node scripts/fps.mjs            # uncapped fps: intro, game, on foot, day
+blender -b --factory-startup -P blender/fracture.py -- king   # pre-fracture a piece
 ```

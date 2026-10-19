@@ -8,19 +8,19 @@ import * as THREE from 'three';
  */
 
 const NIGHT_HORIZON = new THREE.Color('#100d0b');
-const DAY_HORIZON = new THREE.Color('#b9b4a8');
+const DAY_HORIZON = new THREE.Color('#d2cab8');
 
 /** A dome: night haze and stars, or a deep sky with sun and haze; volcano silhouettes in both. */
 function dome() {
   return new THREE.Mesh(
-    new THREE.SphereGeometry(180, 48, 24),
+    new THREE.SphereGeometry(300, 48, 24),
     new THREE.ShaderMaterial({
       side: THREE.BackSide,
       depthWrite: false,
       fog: false,
       uniforms: {
         uDay: { value: 0 },
-        uSun: { value: new THREE.Vector3(-0.5, 0.62, 0.6).normalize() },
+        uSun: { value: new THREE.Vector3(10, 10, 7).normalize() },
         uNightHorizon: { value: NIGHT_HORIZON.clone() },
         uDayHorizon: { value: DAY_HORIZON.clone() },
       },
@@ -53,7 +53,7 @@ function dome() {
           float star = step(0.986, hash(cell + 3.1)) * smoothstep(0.32, 0.0, length(fract(g) - at));
           night += vec3(0.75, 0.72, 0.66) * star * smoothstep(0.08, 0.4, d.y) * (0.35 + 0.65 * hash(cell + 9.1));
           // Day: a deep high-altitude blue over a pale haze, the sun and its halo.
-          vec3 day = mix(uDayHorizon, vec3(0.1, 0.24, 0.48), pow(smoothstep(-0.02, 0.7, d.y), 0.65));
+          vec3 day = mix(uDayHorizon, vec3(0.05, 0.17, 0.42), pow(smoothstep(-0.01, 0.6, d.y), 0.45));
           float s = max(dot(d, uSun), 0.0);
           day += vec3(1.0, 0.82, 0.58) * (pow(s, 6.0) * 0.22 + pow(s, 900.0) * 30.0);
           vec3 c = mix(night, day, uDay);
@@ -61,7 +61,7 @@ function dome() {
           float h = skyline(a);
           if (d.y < h && d.y > -0.05) {
             float up = (d.y + 0.01) / max(h, 0.001);
-            vec3 rock = mix(mix(uDayHorizon, vec3(0.36, 0.4, 0.46), 0.55), uDayHorizon, 0.35 * (1.0 - up));
+            vec3 rock = mix(mix(uDayHorizon, vec3(0.27, 0.31, 0.4), 0.72), uDayHorizon, 0.3 * (1.0 - up));
             float snow = smoothstep(0.05, 0.062, d.y) * step(0.045, h) * (0.75 + 0.25 * noise(a * 300.0));
             rock = mix(rock, vec3(0.86, 0.88, 0.92), snow * 0.85);
             vec3 nightRock = uNightHorizon * 0.55 + vec3(0.004);
@@ -90,7 +90,7 @@ function lightformers(day: boolean) {
     env.add(m);
   };
   if (day) {
-    card('#fff1dc', 14, 1.4, 1.4, -4, 5, 4.4);   // sun
+    card('#fff1dc', 14, 1.4, 1.4, 4.6, 4.6, 3.2); // sun
     card('#a3b9d8', 1.6, 12, 4, 0, 7, 0);       // open sky overhead
     card('#8a7558', 1.1, 14, 3, 0, -4, 0);      // sunlit plaza bouncing back
   } else {
@@ -120,9 +120,10 @@ export function createAtmosphere(scene: THREE.Scene, renderer: THREE.WebGLRender
   key.shadow.bias = -0.0002;
   key.shadow.normalBias = 0.02;
   key.shadow.radius = 3;
-  // Day key: the sun, low enough in the afternoon to rake the carving.
-  const sun = new THREE.DirectionalLight('#fff3e2', 0);
-  sun.position.set(-9, 11.2, 10.8);
+  // Day key: the sun from the side, low enough in the afternoon to rake the carving
+  // of both armies and the temple's stairs.
+  const sun = new THREE.DirectionalLight('#fff0dc', 0);
+  sun.position.set(10, 10, 7);
   sun.castShadow = true;
   sun.shadow.mapSize.set(4096, 4096);
   const sc = sun.shadow.camera;
@@ -133,7 +134,7 @@ export function createAtmosphere(scene: THREE.Scene, renderer: THREE.WebGLRender
   sun.shadow.bias = -0.0003;
   sun.shadow.normalBias = 0.02;
   sun.shadow.radius = 2;
-  const hemi = new THREE.HemisphereLight('#a9c0dd', '#6b5a48', 0);
+  const hemi = new THREE.HemisphereLight('#9db8db', '#7a6650', 0);
   const rim = new THREE.DirectionalLight('#c4cee2', 1.8);
   rim.position.set(3, 9, -12);
   const fill = new THREE.DirectionalLight('#ffe6cc', 0.55); // from the player's seat, so faces never go to mud
@@ -154,17 +155,17 @@ export function createAtmosphere(scene: THREE.Scene, renderer: THREE.WebGLRender
     const horizon = NIGHT_HORIZON.clone().lerp(DAY_HORIZON, k);
     fog.color.copy(horizon);
     (scene.background as THREE.Color).copy(horizon);
-    fog.near = mix(16, 18, k);
-    fog.far = mix(72, 92, k);
+    fog.near = mix(16, 30, k);
+    fog.far = mix(72, 160, k);
     scene.environment = k < 0.5 ? env.night : env.day;
-    scene.environmentIntensity = k < 0.5 ? mix(0.9, 0.5, k * 2) : mix(0.5, 0.75, k * 2 - 1);
+    scene.environmentIntensity = k < 0.5 ? mix(0.9, 0.5, k * 2) : mix(0.5, 0.6, k * 2 - 1);
     key.intensity = 420 * (1 - k);
-    sun.intensity = 3.6 * k;
-    hemi.intensity = 1.1 * k;
+    sun.intensity = 4.4 * k;
+    hemi.intensity = 0.7 * k;
     rim.intensity = mix(1.8, 0.5, k);
     fill.intensity = mix(0.55, 0.25, k);
     flood.intensity = 1100 * (1 - k) ** 2;
-    state.exposure = mix(1.22, 0.92, k);
+    state.exposure = mix(1.22, 1.0, k);
     state.bloom = mix(0.42, 0.14, k);
     state.fire = mix(1, 0.08, k);
     state.dust.copy(DUST.night).lerp(DUST.day, k);

@@ -9,6 +9,17 @@
   --color-ink: #ece6da;
   --color-soft: rgba(236, 230, 218, 0.58);
   --color-paper: #0b0a08;
+  --color-line: rgba(236, 230, 218, 0.16);
+  --color-glass: rgba(11, 10, 8, 0.72);
+}
+
+/* Day: ink on a pale veil, so the type holds against a sunlit plaza and sky. */
+:root[data-theme='day'] {
+  --color-ink: #16130e;
+  --color-soft: rgba(22, 19, 14, 0.62);
+  --color-paper: #f4efe3;
+  --color-line: rgba(22, 19, 14, 0.16);
+  --color-glass: rgba(244, 239, 227, 0.78);
 }
 
 html, body, #root { height: 100%; }

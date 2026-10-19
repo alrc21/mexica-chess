@@ -96,7 +96,7 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
   const scene = new THREE.Scene();
   const atmo = createAtmosphere(scene, renderer, MONUMENT.z);
 
-  const camera = new THREE.PerspectiveCamera(30, 1, 0.1, 400);
+  const camera = new THREE.PerspectiveCamera(30, 1, 0.1, 600);
   const controls = new OrbitControls(camera, canvas);
   controls.enableDamping = true;
   controls.enablePan = false;
@@ -136,11 +136,11 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
 
   // ── Plaza: scanned flagstones running into the haze ───────────────────────
   const plaza = new THREE.Mesh(
-    new THREE.PlaneGeometry(200, 200),
+    new THREE.PlaneGeometry(400, 400),
     new THREE.MeshStandardMaterial({
-      map: tile('/textures/plaza-diff.jpg', 66, true),
-      normalMap: tile('/textures/plaza-nor.jpg', 66),
-      roughnessMap: tile('/textures/plaza-rough.jpg', 66),
+      map: tile('/textures/plaza-diff.jpg', 132, true),
+      normalMap: tile('/textures/plaza-nor.jpg', 132),
+      roughnessMap: tile('/textures/plaza-rough.jpg', 132),
       color: '#6e655c',
       normalScale: new THREE.Vector2(1.5, 1.5),
     }),
@@ -222,7 +222,11 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
     return look.clone();
   };
 
+  // Each camera command takes a new turn; an older flight or cinematic that
+  // loses its turn stops touching the camera.
+  let turn = 0;
   async function fly(to: View, dur: number, rise = 2.6) {
+    const id = turn;
     const l0 = currentLook();
     mode = 'scripted';
     controls.enabled = false;
@@ -231,6 +235,7 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
     const mid = p0.clone().lerp(to.pos, 0.5).add(new THREE.Vector3(0, rise, 0));
     const q = new THREE.Vector3();
     await tween(dur, k => {
+      if (id !== turn) return;
       const e = easeInOut(k);
       q.copy(p0).multiplyScalar((1 - e) ** 2).addScaledVector(mid, 2 * (1 - e) * e).addScaledVector(to.pos, e * e);
       camera.position.copy(q);
@@ -249,18 +254,22 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
 
   const walk = createWalk(camera, () => [...(board?.solids() ?? []), ...BRAZIERS], (_at, run) => audio.play('step', { gain: run ? 0.55 : 0.4 }));
   async function walkIn() {
+    const id = ++turn;
     const s = side === 'w' ? 1 : -1;
     const stand = new THREE.Vector3(0.5, 0, 0.6 * s); // between the armies
     const ahead = new THREE.Vector3(0.5, 0.55, -3.5 * s); // facing the enemy line
     setNear(0.02);
     await fly({ pos: walk.eyeAt(stand), look: ahead, fov: WALK_FOV() }, 2.2, 1.2);
+    if (id !== turn) return;
     walk.place(stand, ahead);
     walk.start();
     mode = 'walk';
   }
   async function walkOut() {
+    const id = ++turn;
     walk.stop();
     await fly(GAME(side), 2, 2.2);
+    if (id !== turn) return;
     setNear(0.1);
     toOrbit(GAME(side));
   }
@@ -313,11 +322,14 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
   }
   async function cinematic(focus: THREE.Vector3, along: THREE.Vector3, action: () => Promise<void>, lead = 0.25, skip: THREE.Vector3[] = []) {
     const back: View = { pos: camera.position.clone(), look: controls.target.clone(), fov: camera.fov };
+    const id = ++turn;
     const flight = fly(witness(focus, along, skip), 0.8, 0.35);
     await tween(lead, () => {});
     await Promise.all([flight, action()]);
     await tween(0.8, () => {}); // watch the rubble
+    if (id !== turn) return;
     await fly(back, 0.9, 0.3);
+    if (id !== turn) return;
     toOrbit(back);
   }
 
@@ -325,17 +337,21 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
     get board() { return board!; },
     audio,
     async toGame(s) {
+      const id = ++turn;
       side = s;
       walking = false;
       walk.stop();
       await fly(GAME(s), 2.8);
+      if (id !== turn) return;
       setNear(0.1);
       toOrbit(GAME(s));
     },
     async toIntro() {
+      const id = ++turn;
       walking = false;
       walk.stop();
       await fly(INTRO(), 2.4);
+      if (id !== turn) return;
       setNear(0.1);
       mode = 'intro';
     },
