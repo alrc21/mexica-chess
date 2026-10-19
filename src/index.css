@@ -21,3 +21,8 @@ body {
   overflow: hidden;
 }
 ::selection { background: #ece6da; color: #0b0a08; }
+
+/* The machine is thinking: a dot that breathes. */
+@keyframes mc-breathe { 0%, 100% { opacity: 0.25; transform: scale(0.8); } 50% { opacity: 1; transform: scale(1); } }
+.mc-breathe { animation: mc-breathe 1.4s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .mc-breathe { animation: none; } }

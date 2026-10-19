@@ -18,7 +18,7 @@ domain is free.
 | Light | A custom lightformer environment (dark, with two braziers, a sky strip and a rim) plus a near-neutral key light | A photographic HDRI washed the basalt out to grey or bronze |
 | Interface | Curated Motions: `#0b0a08` / `#ece6da`, Funnel Display / Funnel Sans / Fragment Mono, plain type in the corners, the `cubic-bezier(.16,1,.3,1)` ease, a curtain transition | One studio, one hand |
 | Stack | Vite + React + three.js. Rules come from chess.js, the opponent is Stockfish WASM in a worker, deployment on Vercel | |
-| Sources | CC0 only: Poly Haven scans | |
+| Sources | CC0 only: Poly Haven scans. Engine: Stockfish 19 lite (GPL-3.0, nmrugg/stockfish.js), shipped with its licence in `public/engine/` | The engine runs as a separate worker and talks UCI |
 
 ## Phases
 
@@ -40,9 +40,14 @@ Each phase ends with before/after screenshots in `docs/evidence/`.
   off into fog, four monumental basalt braziers with shader fire (flame
   tongues, embers, a breathing point light) and bloom that only catches the
   fire.
-- [ ] **3. The game.** chess.js rules, Stockfish with difficulty levels,
-  moves in an arc, capture as stone breaking apart, promotion, undo,
-  touch input. Works on mobile. Hovering a piece names it.
+- [x] **3. The game.** chess.js rules; Stockfish 19 lite in a worker with
+  three levels; two-player mode; pieces travel in an arc and lean into the
+  move (the knight leaps); a capture bursts the victim into shards of its own
+  stone with dust; castling, en passant, promotion with a picker, undo,
+  check ring, game over. Hovering a piece names it. Touch: tap to select.
+- [x] **Intro.** The Templo Mayor stands monumental across the plaza
+  between two braziers; the camera drifts before it, then flies over the
+  board on Play.
 - [ ] **4. Polish.** The Templo Mayor on the horizon, stone-on-stone foley
   (CC0, not synthesised), KTX2 textures, LODs for the pawns, a performance
   pass on mobile, deployment.

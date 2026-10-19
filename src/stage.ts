@@ -6,10 +6,13 @@ import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
+import type { Color, PieceSymbol, Square } from 'chess.js';
+import { advance, easeInOut, tween } from './anim';
+import { createBoard, type Board, type Models } from './board';
 import { createFire, type Fire } from './fire';
+import { MODEL, STONE } from './lore';
 
 type Stone = 'tezontle' | 'basalt' | 'cantera' | 'andesite';
-type Kind = 'pawn' | 'knight' | 'bishop' | 'rook' | 'queen' | 'king';
 
 /**
  * The bake carries the carving; a tiling grain normal carries the stone up
@@ -18,6 +21,8 @@ type Kind = 'pawn' | 'knight' | 'bishop' | 'rook' | 'queen' | 'king';
  */
 const GRAIN_MAP: Record<Stone, 'tezontle' | 'basalt'> = { tezontle: 'tezontle', cantera: 'tezontle', basalt: 'basalt', andesite: 'basalt' };
 const GRAIN_STRENGTH: Record<Stone, number> = { tezontle: 0.9, cantera: 0.6, basalt: 0.35, andesite: 0.5 };
+// Contrast for play: red reads red, the dark squares sit between black basalt and pale cantera.
+const TINT: Record<Stone, number> = { tezontle: 1.2, basalt: 1.0, cantera: 0.9, andesite: 1.45 };
 
 function addGrain(mat: THREE.MeshStandardMaterial, map: THREE.Texture, scale: number, strength: number) {
   mat.onBeforeCompile = shader => {
@@ -40,8 +45,8 @@ uniform float grainStrength;`)
 }
 
 /**
- * What the stone reflects: near-black with a few light cards — two braziers,
- * a dim strip of night sky, a rim. Burnished basalt reads black with clean
+ * What the stone reflects: near-black with a few light cards — braziers, a
+ * dim strip of night sky, a rim. Burnished basalt reads black with clean
  * highlights instead of mirroring a bright photo studio.
  */
 function lightformers() {
@@ -63,53 +68,107 @@ function lightformers() {
   return env;
 }
 
-// Board space: files a–h run along +x, rank 1 is nearest the camera (+z).
-const SLAB_TOP = 0.06;
-const at = (file: number, rank: number) => new THREE.Vector3(file - 3.5, 0, 3.5 - rank);
-const BACK_RANK: Kind[] = ['rook', 'knight', 'bishop', 'queen', 'king', 'bishop', 'knight', 'rook'];
-const BRAZIER = { scale: 2.2, inset: 6.8 }; // fire sits on the coals, 0.8 up the model
+const HORIZON = '#100d0b';
 
-export function createStage(canvas: HTMLCanvasElement, onReady: () => void) {
+/** Night sky: a warm haze at the horizon going black overhead, a few faint stars. */
+function sky() {
+  return new THREE.Mesh(
+    new THREE.SphereGeometry(180, 32, 16),
+    new THREE.ShaderMaterial({
+      side: THREE.BackSide,
+      depthWrite: false,
+      fog: false,
+      uniforms: { uHorizon: { value: new THREE.Color(HORIZON) } },
+      vertexShader: /* glsl */ `
+        varying vec3 vDir;
+        void main() { vDir = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+      fragmentShader: /* glsl */ `
+        uniform vec3 uHorizon;
+        varying vec3 vDir;
+        float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+        void main() {
+          vec3 d = normalize(vDir);
+          vec3 c = mix(uHorizon, vec3(0.006, 0.006, 0.007), smoothstep(-0.02, 0.45, d.y));
+          vec2 g = vec2(atan(d.z, d.x) * 140.0, d.y * 140.0);
+          vec2 cell = floor(g);
+          vec2 at = vec2(hash(cell), hash(cell + 7.3));
+          float star = step(0.986, hash(cell + 3.1)) * smoothstep(0.32, 0.0, length(fract(g) - at));
+          c += vec3(0.75, 0.72, 0.66) * star * smoothstep(0.08, 0.4, d.y) * (0.35 + 0.65 * hash(cell + 9.1));
+          gl_FragColor = vec4(c, 1.0);
+        }`,
+    }),
+  );
+}
+
+// Board space: files a–h run along +x, rank 1 is nearest +z (tezontle).
+const at = (file: number, rank: number) => new THREE.Vector3(file - 3.5, 0, 3.5 - rank);
+const BRAZIER = { scale: 2.2, inset: 6.8 };
+const MONUMENT = { scale: 14, z: -27 };
+
+type View = { pos: THREE.Vector3; look: THREE.Vector3; fov: number };
+const V = (p: [number, number, number], l: [number, number, number], fov: number): View =>
+  ({ pos: new THREE.Vector3(...p), look: new THREE.Vector3(...l), fov });
+
+export type Stage = {
+  board: Board;
+  /** Fly from wherever the camera is to a side's playing view. */
+  toGame(side: Color): Promise<void>;
+  /** Back to the slow drift in front of the Templo Mayor. */
+  toIntro(): Promise<void>;
+  setCursor(pointer: boolean): void;
+};
+
+export type StageEvents = {
+  onReady(stage: Stage): void;
+  onSquare(sq: Square): void;
+  onHover(sq: Square | null): void;
+};
+
+export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-  renderer.toneMapping = THREE.AgXToneMapping;
-  renderer.toneMappingExposure = 1.05;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping; // more bite than AgX: deep blacks, saturated oxide red
+  renderer.toneMappingExposure = 1.22;
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color('#0b0a08');
-  scene.fog = new THREE.Fog('#0b0a08', 13, 34); // the plaza runs off into the night
+  scene.background = new THREE.Color(HORIZON);
+  scene.fog = new THREE.Fog(HORIZON, 16, 72);
+  scene.add(sky());
   const pmrem = new THREE.PMREMGenerator(renderer);
   scene.environment = pmrem.fromScene(lightformers(), 0.02).texture;
-  scene.environmentIntensity = 0.8;
+  scene.environmentIntensity = 0.9;
 
-  const camera = new THREE.PerspectiveCamera(30, 1, 0.1, 120);
-  camera.position.set(-4.6, 3.7, 10.2); // low, from tezontle's side: the basalt army faces you
+  const camera = new THREE.PerspectiveCamera(30, 1, 0.1, 400);
   const controls = new OrbitControls(camera, canvas);
-  controls.target.set(0, 0.3, 0.4);
   controls.enableDamping = true;
   controls.enablePan = false;
-  controls.minDistance = 3.5;
-  controls.maxDistance = 26;
-  controls.maxPolarAngle = 1.38;
-  controls.autoRotate = true;
-  controls.autoRotateSpeed = 0.18;
-  controls.addEventListener('start', () => { controls.autoRotate = false; });
+  controls.minDistance = 5;
+  controls.maxDistance = 22;
+  controls.maxPolarAngle = 1.32;
+  controls.enabled = false;
 
-  // Warm key from the near brazier side (casts the shadows), a dim cool moon to fill.
-  const key = new THREE.DirectionalLight('#ffe2c4', 2.1);
-  key.position.set(-6, 8, 5);
+  // ── Light: a stage pool on the board, warm fire around, a cold rim behind ──
+  const key = new THREE.SpotLight('#fff0dc', 420, 0, 0.56, 0.6, 2);
+  key.position.set(-3.2, 13, 5.5);
+  key.target.position.set(0, 0, 0);
   key.castShadow = true;
   key.shadow.mapSize.set(4096, 4096);
-  Object.assign(key.shadow.camera, { left: -7, right: 7, top: 7, bottom: -7, near: 1, far: 30 });
-  key.shadow.bias = -0.0003;
+  key.shadow.bias = -0.0002;
   key.shadow.normalBias = 0.02;
   key.shadow.radius = 3;
-  scene.add(key);
-  const moon = new THREE.DirectionalLight('#cdd5e2', 0.45);
-  moon.position.set(6, 10, -7);
-  scene.add(moon);
+  scene.add(key, key.target);
+  const rim = new THREE.DirectionalLight('#c4cee2', 1.8);
+  rim.position.set(3, 9, -12);
+  const fill = new THREE.DirectionalLight('#ffe6cc', 0.55); // from the player's seat, so faces never go to mud
+  fill.position.set(2, 6, 12);
+  scene.add(rim, fill);
+  // The monument's face, lit from the plaza like a floodlit ruin.
+  const flood = new THREE.SpotLight('#ffb878', 1100, 0, 0.38, 0.9, 2);
+  flood.position.set(0, 0.3, -11);
+  flood.target.position.set(0, 5, MONUMENT.z);
+  scene.add(flood, flood.target);
 
   // ── Textures ──────────────────────────────────────────────────────────────
   const textures = new THREE.TextureLoader();
@@ -126,36 +185,36 @@ export function createStage(canvas: HTMLCanvasElement, onReady: () => void) {
 
   // ── Plaza: scanned flagstones running into the dark ───────────────────────
   const plaza = new THREE.Mesh(
-    new THREE.PlaneGeometry(90, 90),
+    new THREE.PlaneGeometry(200, 200),
     new THREE.MeshStandardMaterial({
-      map: tile('/textures/plaza-diff.jpg', 30, true),
-      normalMap: tile('/textures/plaza-nor.jpg', 30),
-      roughnessMap: tile('/textures/plaza-rough.jpg', 30),
-      color: '#8a8178',
-      normalScale: new THREE.Vector2(1.4, 1.4),
+      map: tile('/textures/plaza-diff.jpg', 66, true),
+      normalMap: tile('/textures/plaza-nor.jpg', 66),
+      roughnessMap: tile('/textures/plaza-rough.jpg', 66),
+      color: '#6e655c',
+      normalScale: new THREE.Vector2(1.5, 1.5),
     }),
   );
   plaza.rotation.x = -Math.PI / 2;
   plaza.receiveShadow = true;
   scene.add(plaza);
-
-  // Mortar bed showing between the slabs.
-  const bed = new THREE.Mesh(new THREE.PlaneGeometry(8.1, 8.1), new THREE.MeshStandardMaterial({ color: '#100d0a', roughness: 1 }));
+  const bed = new THREE.Mesh(new THREE.PlaneGeometry(8.1, 8.1), new THREE.MeshStandardMaterial({ color: '#0d0b09', roughness: 1 }));
   bed.rotation.x = -Math.PI / 2;
   bed.position.y = 0.004;
   scene.add(bed);
 
   // ── Models ────────────────────────────────────────────────────────────────
-  const gltf = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
   // Returns the glTF root: the mesh node inside keeps the scale/offset meshopt
   // quantisation stored on it; we only ever move the root.
+  const gltf = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
   const load = async (name: string, stone: Stone, grainScale: number) => {
     const g = await gltf.loadAsync(`/models/${name}-${stone}.glb`);
     g.scene.traverse(o => {
       const m = o as THREE.Mesh;
       if (!m.isMesh) return;
       m.castShadow = m.receiveShadow = true;
-      addGrain(m.material as THREE.MeshStandardMaterial, grain[GRAIN_MAP[stone]], grainScale, GRAIN_STRENGTH[stone]);
+      const mat = m.material as THREE.MeshStandardMaterial;
+      mat.color.multiplyScalar(TINT[stone]);
+      addGrain(mat, grain[GRAIN_MAP[stone]], grainScale, GRAIN_STRENGTH[stone]);
     });
     return g.scene;
   };
@@ -169,17 +228,82 @@ export function createStage(canvas: HTMLCanvasElement, onReady: () => void) {
   };
 
   const fires: Fire[] = [];
+  const light = (p: THREE.Vector3, scale: number, seed: number) => {
+    const fire = createFire(seed, scale / 1.7);
+    fire.group.position.copy(p).setY(0.8 * scale);
+    scene.add(fire.group);
+    fires.push(fire);
+  };
+
+  let board: Board | null = null;
   let disposed = false;
 
+  // ── Camera: a slow drift before the pyramid, then a flight to the board ───
+  const narrow = () => camera.aspect < 0.8;
+  const INTRO = () => narrow()
+    ? V([0, 1.9, 9.5], [0, 5.2, MONUMENT.z], 48)
+    : V([0, 1.35, 7.4], [0, 4.6, MONUMENT.z], 32);
+  const GAME = (side: Color) => {
+    const s = side === 'w' ? 1 : -1;
+    return narrow() ? V([0, 17.2, 12.6 * s], [0, 0, 1.5 * s], 52) : V([0, 8.4, 11.2 * s], [0, 0, 1.25 * s], 30);
+  };
+  let mode: 'intro' | 'flying' | 'game' = 'intro';
+  let side: Color = 'w';
+  const look = new THREE.Vector3();
+  const setView = (v: View) => {
+    camera.position.copy(v.pos);
+    look.copy(v.look);
+    camera.lookAt(look);
+    camera.fov = v.fov;
+    camera.updateProjectionMatrix();
+  };
+
+  async function fly(to: View, dur: number) {
+    mode = 'flying';
+    controls.enabled = false;
+    const p0 = camera.position.clone();
+    const l0 = look.clone();
+    const f0 = camera.fov;
+    const mid = p0.clone().lerp(to.pos, 0.5).add(new THREE.Vector3(0, 2.6, 0)); // rise over the board
+    const q = new THREE.Vector3();
+    await tween(dur, k => {
+      const e = easeInOut(k);
+      q.copy(p0).multiplyScalar((1 - e) ** 2).addScaledVector(mid, 2 * (1 - e) * e).addScaledVector(to.pos, e * e);
+      camera.position.copy(q);
+      look.lerpVectors(l0, to.look, e);
+      camera.lookAt(look);
+      camera.fov = f0 + (to.fov - f0) * e;
+      camera.updateProjectionMatrix();
+    });
+  }
+
+  const stage: Stage = {
+    get board() { return board!; },
+    async toGame(s) {
+      side = s;
+      if (mode === 'game') look.copy(controls.target); // flying from wherever the player left it
+      await fly(GAME(s), 2.8);
+      controls.target.copy(GAME(s).look);
+      controls.enabled = true;
+      mode = 'game';
+    },
+    async toIntro() {
+      if (mode === 'game') look.copy(controls.target);
+      await fly(INTRO(), 2.4);
+      mode = 'intro';
+    },
+    setCursor(pointer) { canvas.style.cursor = pointer ? 'pointer' : ''; },
+  };
+
   (async () => {
-    const kinds: Kind[] = ['pawn', 'knight', 'bishop', 'rook', 'queen', 'king'];
-    const sides = ['tezontle', 'basalt'] as const;
-    const [pieces, slabs, frame, corner, brazier] = await Promise.all([
-      Promise.all(sides.map(s => Promise.all(kinds.map(k => load(k, s, 9))))),
+    const kinds = Object.keys(MODEL) as PieceSymbol[];
+    const [pieces, slabs, frame, corner, brazier, monument] = await Promise.all([
+      Promise.all((['w', 'b'] as Color[]).map(c => Promise.all(kinds.map(k => load(MODEL[k], STONE[c], 9))))),
       Promise.all((['cantera', 'andesite'] as const).map(s => Promise.all([0, 1, 2].map(v => load(`slab${v}`, s, 4))))),
       load('frame', 'basalt', 7),
       load('corner', 'basalt', 5),
       load('brazier', 'basalt', 7),
+      load('monument', 'tezontle', 9),
     ]);
     if (disposed) return;
 
@@ -191,44 +315,67 @@ export function createStage(canvas: HTMLCanvasElement, onReady: () => void) {
           .traverse(o => { o.castShadow = false; }); // flat: nothing to cast
       }
     }
-
-    // Border: four kerb segments a side, a carved block at each corner.
     for (let k = 0; k < 4; k++) {
-      const side = new THREE.Group();
-      side.rotation.y = k * Math.PI / 2;
-      for (const x of [-3, -1, 1, 3]) place(frame, new THREE.Vector3(x, 0, 4.25), 0, 1, side);
-      place(corner, new THREE.Vector3(4.3, 0, 4.25), 0, 1, side);
-      scene.add(side);
+      const edge = new THREE.Group();
+      edge.rotation.y = k * Math.PI / 2;
+      for (const x of [-3, -1, 1, 3]) place(frame, new THREE.Vector3(x, 0, 4.25), 0, 1, edge);
+      place(corner, new THREE.Vector3(4.3, 0, 4.25), 0, 1, edge);
+      scene.add(edge);
     }
-
-    // The armies, facing each other: tezontle on ranks 1–2, basalt on 7–8.
-    sides.forEach((_, s) => {
-      const [back, pawns] = s === 0 ? [0, 1] : [7, 6];
-      const turn = s === 0 ? Math.PI : 0;
-      const of = (k: Kind) => pieces[s][kinds.indexOf(k)];
-      BACK_RANK.forEach((k, f) => place(of(k), at(f, back).setY(SLAB_TOP), turn));
-      for (let f = 0; f < 8; f++) place(of('pawn'), at(f, pawns).setY(SLAB_TOP), turn);
-    });
-
-    // Braziers at the four corners, lit.
     [[-1, 1], [1, 1], [1, -1], [-1, -1]].forEach(([sx, sz], i) => {
       const p = new THREE.Vector3(sx * BRAZIER.inset, 0, sz * BRAZIER.inset);
       place(brazier, p, i * 0.7, BRAZIER.scale);
-      const fire = createFire(i * 1.37 + 0.4, BRAZIER.scale / 1.7);
-      fire.group.position.copy(p).setY(0.8 * BRAZIER.scale);
-      scene.add(fire.group);
-      fires.push(fire);
+      light(p, BRAZIER.scale, i * 1.37 + 0.4);
     });
 
+    // The Templo Mayor itself, across the plaza, its stairs facing the board.
+    place(monument, new THREE.Vector3(0, 0, MONUMENT.z), 0, MONUMENT.scale).traverse(o => { o.castShadow = false; });
+    for (const sx of [-1, 1]) {
+      const p = new THREE.Vector3(sx * 7.6, 0, MONUMENT.z + 7.8);
+      place(brazier, p, sx, 3.2);
+      light(p, 3.2, sx * 2.1 + 5);
+    }
+
+    const models = { w: {}, b: {} } as Models;
+    (['w', 'b'] as Color[]).forEach((c, i) => kinds.forEach((k, j) => { models[c][k] = pieces[i][j]; }));
+    board = createBoard(scene, models);
     renderer.compile(scene, camera);
-    onReady();
+    events.onReady(stage);
   })();
 
   // ── Post: bloom only catches what burns ───────────────────────────────────
   const composer = new EffectComposer(renderer);
   composer.addPass(new RenderPass(scene, camera));
-  composer.addPass(new UnrealBloomPass(new THREE.Vector2(1, 1), 0.42, 0.28, 1.0));
+  composer.addPass(new UnrealBloomPass(new THREE.Vector2(1, 1), 0.42, 0.3, 1.0));
   composer.addPass(new OutputPass());
+
+  // ── Pointer: a click is a press that didn't become a drag ─────────────────
+  const ndc = new THREE.Vector2();
+  let down: { x: number; y: number } | null = null;
+  let hovered: Square | null = null;
+  const toNdc = (e: PointerEvent) => {
+    const r = canvas.getBoundingClientRect();
+    ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+  };
+  const onDown = (e: PointerEvent) => { down = { x: e.clientX, y: e.clientY }; };
+  const onUp = (e: PointerEvent) => {
+    if (!down || mode !== 'game' || !board) return;
+    const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y);
+    down = null;
+    if (moved > 6) return;
+    toNdc(e);
+    const sq = board.pick(ndc, camera);
+    if (sq) events.onSquare(sq);
+  };
+  const onMove = (e: PointerEvent) => {
+    if (mode !== 'game' || !board || e.pointerType !== 'mouse') return;
+    toNdc(e);
+    const sq = board.pick(ndc, camera);
+    if (sq !== hovered) { hovered = sq; events.onHover(sq); }
+  };
+  canvas.addEventListener('pointerdown', onDown);
+  canvas.addEventListener('pointerup', onUp);
+  canvas.addEventListener('pointermove', onMove);
 
   const resize = () => {
     const { clientWidth: w, clientHeight: h } = canvas;
@@ -236,25 +383,40 @@ export function createStage(canvas: HTMLCanvasElement, onReady: () => void) {
     composer.setPixelRatio(renderer.getPixelRatio());
     composer.setSize(w, h);
     camera.aspect = w / h;
-    // Narrow screens: widen the lens and step back so the whole board stays in frame.
-    // Portrait: high and square behind tezontle, so the whole board fits between the braziers.
-    const narrow = camera.aspect < 0.8;
-    camera.fov = narrow ? 50 : 30;
-    if (narrow) camera.position.set(0, 17, 11).setLength(21.5);
-    else camera.position.sub(controls.target).setLength(11.8).add(controls.target);
-    // Dev: ?cam=x,y,z pins the camera for screenshots.
-    const pin = new URLSearchParams(location.search).get('cam')?.split(',').map(Number);
-    if (pin?.length === 3) { camera.position.set(pin[0], pin[1], pin[2]); controls.autoRotate = false; }
+    if (mode === 'intro') setView(INTRO());
+    if (mode === 'game') {
+      const v = GAME(side);
+      camera.fov = v.fov;
+      controls.target.copy(v.look);
+    }
     camera.updateProjectionMatrix();
   };
   const ro = new ResizeObserver(resize);
   ro.observe(canvas);
   resize();
+  // Dev: ?cam=x,y,z&look=x,y,z pins the camera for screenshots.
+  const q = new URLSearchParams(location.search);
+  const pin = q.get('cam')?.split(',').map(Number);
+  if (pin?.length === 3) {
+    mode = 'game';
+    camera.position.set(pin[0], pin[1], pin[2]);
+    controls.target.fromArray(q.get('look')?.split(',').map(Number) ?? [0, 0.3, 0]);
+    controls.enabled = true;
+  }
 
   const clock = new THREE.Clock();
   renderer.setAnimationLoop(() => {
-    const t = clock.getElapsedTime();
-    controls.update();
+    const dt = Math.min(clock.getDelta(), 1 / 20);
+    const t = clock.elapsedTime;
+    advance(dt);
+    board?.update(dt);
+    if (mode === 'intro') {
+      // A breath of movement: the camera sways and creeps toward the pyramid.
+      const v = INTRO();
+      camera.position.copy(v.pos).add(new THREE.Vector3(Math.sin(t * 0.09) * 0.9, Math.sin(t * 0.06) * 0.18, -Math.sin(t * 0.04) * 0.6));
+      look.copy(v.look);
+      camera.lookAt(look);
+    } else if (mode === 'game') controls.update();
     for (const f of fires) f.update(t, camera);
     composer.render();
   });
@@ -262,6 +424,9 @@ export function createStage(canvas: HTMLCanvasElement, onReady: () => void) {
   return () => {
     disposed = true;
     renderer.setAnimationLoop(null);
+    canvas.removeEventListener('pointerdown', onDown);
+    canvas.removeEventListener('pointerup', onUp);
+    canvas.removeEventListener('pointermove', onMove);
     ro.disconnect();
     controls.dispose();
     composer.dispose();
