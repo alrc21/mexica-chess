@@ -149,8 +149,8 @@ export function createAtmosphere(scene: THREE.Scene, renderer: THREE.WebGLRender
   sun.castShadow = true;
   sun.shadow.mapSize.set(4096, 4096);
   const sc = sun.shadow.camera;
-  sc.left = sc.bottom = -8.5;
-  sc.right = sc.top = 8.5;
+  sc.left = sc.bottom = -11; // the whole summit deck in Calakmul
+  sc.right = sc.top = 11;
   sc.near = 1;
   sc.far = 40;
   sun.shadow.bias = -0.0003;

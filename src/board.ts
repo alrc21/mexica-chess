@@ -397,6 +397,7 @@ export function createBoard(scene: THREE.Scene, models: Models, sfx: Sfx, hooks:
     play,
     collapse,
     setShards: rubble.setShards,
+    setEdge: rubble.setEdge,
     /** Footprints the walker can't pass through. */
     solids: () => [...pieces.values()].map(o => ({ x: o.position.x, z: o.position.z, r: 0.36 })),
     setDustColor: rubble.setDustColor,

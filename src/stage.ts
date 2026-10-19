@@ -453,6 +453,7 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
       atmo.setPlace(p);
       tenochtitlan.visible = p === 'tenochtitlan';
       calakmul.visible = p === 'calakmul';
+      board?.setEdge(p === 'calakmul' ? 10.5 : Infinity);
       mixAmbience(1.5);
       renderer.shadowMap.needsUpdate = true;
       if (mode === 'intro') setView(INTRO());

@@ -15,9 +15,10 @@ type Stone = 'tezontle' | 'basalt';
 
 const GRAVITY = 6; // board units/s²: heavy, slower than a toy falls
 const SLAB_TOP = 0.06;
+let edge = Infinity; // where the ground ends: on a summit, stone thrown past the rim falls to the forest
 const floorAt = (x: number, z: number) => {
   const m = Math.max(Math.abs(x), Math.abs(z));
-  return m < 4 ? SLAB_TOP : m < 4.5 ? 0.11 : 0; // slabs, the basalt frame, the plaza
+  return m < 4 ? SLAB_TOP : m < 4.5 ? 0.11 : m < edge ? 0 : -60; // slabs, the basalt frame, the plaza, the drop
 };
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
 
@@ -296,6 +297,7 @@ export function createRubble(scene: THREE.Scene, sfx: Sfx) {
   function step(b: Body, dt: number, obstacles: Obstacle[]) {
     const p = b.o.position;
     if (b.asleep) return;
+    if (p.y < -20) { b.asleep = true; b.o.visible = false; return; } // gone into the trees
     b.v.y -= GRAVITY * dt;
     p.addScaledVector(b.v, dt);
     const spin = b.w.length();
@@ -339,6 +341,8 @@ export function createRubble(scene: THREE.Scene, sfx: Sfx) {
   return {
     burst,
     puff,
+    /** Half-width of the ground (Infinity on the plaza); beyond it rubble falls away. */
+    setEdge(e: number) { edge = e; },
     setShards(s: Partial<Record<PieceSymbol, THREE.Object3D>>, materials: Record<Stone, THREE.Material>) {
       shards = s;
       interior = materials;

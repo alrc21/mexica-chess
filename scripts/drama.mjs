@@ -20,6 +20,7 @@ await page.goto(`http://localhost:3100/${query}`, { waitUntil: 'load' });
 await page.waitForFunction(() => window.__game, { timeout: 60000 });
 await sleep(4000); // shards load after ready
 await page.mouse.click(5, 5); // a gesture opens the audio
+if (process.env.PLACE) { await page.evaluate(p => window.__stage.setPlace(p), process.env.PLACE); await sleep(500); }
 await page.evaluate(() => window.__game.start({ side: 'w', mode: 'friend', level: 'easy' }));
 await sleep(3600);
 const move = async (a, b, settle = 1500) => { await page.evaluate((a, b) => { window.__game.square(a); window.__game.square(b); }, a, b); await sleep(settle); };
