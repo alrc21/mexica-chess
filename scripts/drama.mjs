@@ -14,8 +14,8 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const errors = [];
 const page = await browser.newPage();
 page.on('pageerror', e => errors.push(e.message));
-page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
-await page.setViewport({ width: 1440, height: 900, deviceScaleFactor: 1 });
+page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); if (m.text().includes('[stage]')) console.log(m.text()); });
+await page.setViewport({ width: 1440, height: 900, deviceScaleFactor: Number(process.env.DPR ?? 1) });
 await page.goto(`http://localhost:3100/${query}`, { waitUntil: 'load' });
 await page.waitForFunction(() => window.__game, { timeout: 60000 });
 await sleep(4000); // shards load after ready

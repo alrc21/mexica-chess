@@ -143,6 +143,8 @@ export function createAtmosphere(scene: THREE.Scene, renderer: THREE.WebGLRender
   flood.position.set(0, 0.3, -11);
   flood.target.position.set(0, 5, monumentZ);
   scene.add(key, key.target, sun, sun.target, hemi, rim, fill, flood, flood.target);
+  // Both shadow maps must exist from the first pass, even the one for the dark light.
+  key.shadow.needsUpdate = sun.shadow.needsUpdate = true;
 
   const mix = (a: number, b: number, k: number) => a + (b - a) * k;
   const state = { k: 0, exposure: 1.22, bloom: 0.42, fire: 1, dust: new THREE.Color('#6a5848') };
@@ -160,6 +162,9 @@ export function createAtmosphere(scene: THREE.Scene, renderer: THREE.WebGLRender
     scene.environment = k < 0.5 ? env.night : env.day;
     scene.environmentIntensity = k < 0.5 ? mix(0.9, 0.5, k * 2) : mix(0.5, 0.6, k * 2 - 1);
     key.intensity = 420 * (1 - k);
+    // A dark light's shadow map isn't worth re-rendering.
+    key.shadow.autoUpdate = k < 1;
+    sun.shadow.autoUpdate = k > 0;
     sun.intensity = 4.4 * k;
     hemi.intensity = 0.7 * k;
     rim.intensity = mix(1.8, 0.5, k);

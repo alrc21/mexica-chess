@@ -552,18 +552,22 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
     controls.enabled = true;
   }
 
-  // Adaptive resolution: a machine that can't hold ~45 fps renders fewer pixels.
-  let slow = 1 / 60;
-  let sampled = -3; // let the first seconds after loading (shader compiles, texture uploads) pass
+  // Adaptive resolution, judged only on quiet frames: a blow, a flight or a
+  // shadow re-render is a moment, not the machine's pace. Too slow at rest →
+  // fewer pixels; comfortably fast at rest → back toward full sharpness.
+  const MAX_DPR = dpr;
+  let pace = 1 / 60;
+  let quiet = -3; // the first seconds after loading (compiles, uploads) don't count
   const adapt = (raw: number) => {
-    slow = slow * 0.95 + raw * 0.05;
-    if ((sampled += raw) < 2.5) return;
-    sampled = 0;
-    if (slow > 1 / 45 && dpr > 1) {
-      dpr = Math.max(1, dpr - 0.25);
-      renderer.setPixelRatio(dpr);
-      resize();
-    }
+    pace = pace * 0.95 + raw * 0.05;
+    if ((quiet += raw) < 3) return;
+    quiet = 0;
+    const next = pace > 1 / 40 ? Math.max(1, dpr - 0.25) : pace < 1 / 56 ? Math.min(MAX_DPR, dpr + 0.25) : dpr;
+    if (next === dpr) return;
+    dpr = next;
+    console.info(`[stage] resolution ${dpr}x`);
+    renderer.setPixelRatio(dpr);
+    resize();
   };
 
   const shakePos = new THREE.Vector3();
@@ -572,14 +576,16 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
   renderer.setAnimationLoop(() => {
     timer.update();
     const raw = timer.getDelta();
-    if (board && !document.hidden) adapt(Math.min(raw, 0.1));
     const real = Math.min(raw, 1 / 20);
     now += real;
     const dt = real * timeScale();
     const t = timer.getElapsed();
     advance(dt);
     const moving = board?.update(dt);
-    if (moving || animating()) renderer.shadowMap.needsUpdate = true;
+    const busy = moving || animating();
+    if (busy) renderer.shadowMap.needsUpdate = true;
+    if (board && !busy && !document.hidden) adapt(Math.min(raw, 0.1));
+    else quiet = Math.min(quiet, 0); // a busy stretch restarts the quiet window
     if (hoverDirty && (mode === 'orbit' || mode === 'walk') && board) {
       hoverDirty = false;
       const hit = board.pick(ndc, camera);
