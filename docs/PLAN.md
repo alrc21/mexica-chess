@@ -115,7 +115,6 @@ Each phase ends with before/after screenshots in `docs/evidence/`.
 ## Open items (needs input)
 
 - Name and domain (it ships as Mexica Chess on a vercel.app address).
-- A licence for this code (none yet: all rights reserved by default).
 - Who it is for and what it is for: a portfolio piece, a product, or both.
 
 ## Commands

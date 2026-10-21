@@ -2,7 +2,7 @@
 
 **Play: [mexica-chess.vercel.app](https://mexica-chess.vercel.app)** · [About](https://mexica-chess.vercel.app/about)
 
-A chess set carved in volcanic stone, played in 3D in the browser: red tezontle against black basalt, on the plaza of Tenochtitlan or on a temple above the forest of Calakmul. An experiment by [Alia Studio](https://alia.studio) — make a game, model it in Blender, build it in 3D, make it fun, with design that feels Mexican in its material.
+A chess set carved in volcanic stone, played in 3D in the browser: red tezontle against black basalt, on the plaza of Tenochtitlan or on a temple above the forest of Calakmul. An experiment by [Alia Studio](https://www.aliastudio.cc/) — make a game, model it in Blender, build it in 3D, make it fun, with design that feels Mexican in its material.
 
 ![The Templo Mayor at night](public/stills/templo-mayor.jpg)
 
@@ -45,4 +45,5 @@ More in [docs/PLAN.md](docs/PLAN.md).
 - **Sounds**: CC0, from Freesound and Kenney — every file and its author in `public/audio/CREDITS.txt`.
 - **Stone scans**: CC0, [Poly Haven](https://polyhaven.com) (rock_05, dark_rock, large_grey_tiles, mossy_sandstone).
 - **Fonts**: Funnel Display, Funnel Sans, Fragment Mono — Google Fonts, SIL Open Font License.
-- **This code and the Blender scripts**: no licence has been chosen yet.
+- **This code and the Blender scripts**: MIT — [LICENSE](LICENSE).
+- **The art** (models, baked textures, images): © Alia Studio, CC BY-NC 4.0 — [LICENSE-ART.md](LICENSE-ART.md).
