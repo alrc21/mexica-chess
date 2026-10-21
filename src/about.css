@@ -1,0 +1,7 @@
+/* The About page shares the game's type and palette; unlike the game, it scrolls. */
+@import "./index.css";
+
+html, body { height: auto; }
+body { overflow: auto; }
+img { display: block; width: 100%; height: auto; }
+a { text-underline-offset: 3px; }

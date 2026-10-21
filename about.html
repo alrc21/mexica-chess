@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#0b0a08" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <title>About · Mexica Chess</title>
+    <meta name="description" content="An Alia Studio experiment: a chess set carved in volcanic stone in Blender, played in 3D in the browser — tezontle against basalt, on the plaza of Tenochtitlan." />
+    <meta property="og:title" content="Mexica Chess — an Alia Studio experiment" />
+    <meta property="og:description" content="A chess set carved in volcanic stone in Blender, played in 3D in the browser." />
+    <meta property="og:image" content="/stills/templo-mayor.jpg" />
+    <link rel="stylesheet" href="/src/about.css" />
+  </head>
+  <body class="bg-paper text-ink">
+    <header class="mx-auto flex max-w-[1180px] items-center justify-between px-4 pt-[max(1.25rem,env(safe-area-inset-top))] md:px-8">
+      <a href="/" class="font-display text-[17px] tracking-[-0.01em] transition-opacity duration-300 hover:opacity-60">Mexica Chess</a>
+      <a href="/" class="rounded-full bg-ink px-5 py-2 text-[14px] text-paper transition-opacity duration-300 hover:opacity-85">Play</a>
+    </header>
+
+    <main class="mx-auto max-w-[1180px] px-4 pb-24 md:px-8">
+      <section class="pt-16 md:pt-24">
+        <p class="font-mono text-[11px] uppercase tracking-[0.12em] text-soft">An Alia Studio experiment · October 2026</p>
+        <h1 class="mt-5 max-w-[15ch] font-display text-[44px] font-light leading-[0.98] tracking-[-0.03em] md:text-[84px]">A chess set carved in volcanic stone.</h1>
+        <p class="mt-6 max-w-[54ch] text-[17px] leading-[1.6] text-soft md:text-[19px]">
+          Mexica Chess is an experiment by Alia Studio. We design brands and websites; we wanted to find out whether
+          a small studio could also make a game — model it in Blender, build it in 3D for the browser, make it fun to
+          play — and give it design that feels Mexican in its material, not in its decoration.
+        </p>
+        <figure class="mt-12">
+          <img src="/stills/templo-mayor.jpg" alt="The Templo Mayor at night across the plaza, braziers burning on either side." width="2400" height="1350" />
+          <figcaption class="mt-3 font-mono text-[11px] uppercase tracking-[0.12em] text-soft">The Templo Mayor at night, from the board</figcaption>
+        </figure>
+      </section>
+
+      <section class="mt-20 grid gap-6 border-t border-line pt-8 md:mt-28 md:grid-cols-[220px_1fr] md:gap-10">
+        <p class="font-mono text-[11px] uppercase tracking-[0.12em] text-soft">01 · The idea</p>
+        <div>
+          <h2 class="max-w-[22ch] font-display text-[30px] font-light leading-[1.05] tracking-[-0.02em] md:text-[40px]">Two armies of stone.</h2>
+          <p class="mt-5 max-w-[62ch] text-[17px] leading-[1.65] text-soft">
+            Red tezontle — the porous volcanic rock the Mexica built with, and later the old centre of Mexico City —
+            against black basalt. Each piece is a figure of Mexica society. The <span class="text-ink">Huey Tlatoani</span>,
+            the ruler, is the king. The <span class="text-ink">Cihuacoatl</span>, his second in command, is the queen.
+            The <span class="text-ink">Cuauhtli</span> and the <span class="text-ink">Ocelotl</span>, eagle and jaguar
+            warriors, are bishop and knight. The <span class="text-ink">Teocalli</span>, a temple-pyramid, is the rook.
+            The <span class="text-ink">Macehualli</span>, the commoner who fought on foot, is the pawn.
+          </p>
+          <figure class="mt-10">
+            <img src="/stills/pieces.jpg" alt="Tezontle pieces in the foreground, basalt pieces across the board, temples behind." width="2400" height="1350" loading="lazy" />
+            <figcaption class="mt-3 font-mono text-[11px] uppercase tracking-[0.12em] text-soft">Tezontle facing basalt</figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section class="mt-20 grid gap-6 border-t border-line pt-8 md:mt-28 md:grid-cols-[220px_1fr] md:gap-10">
+        <p class="font-mono text-[11px] uppercase tracking-[0.12em] text-soft">02 · Carved in Blender</p>
+        <div>
+          <h2 class="max-w-[22ch] font-display text-[30px] font-light leading-[1.05] tracking-[-0.02em] md:text-[40px]">Every piece is a script.</h2>
+          <p class="mt-5 max-w-[62ch] text-[17px] leading-[1.65] text-soft">
+            Nothing here is a stock model. Each piece is a short Python script for Blender that describes its masses and
+            its carvings: stepped grecas, faces, feathers, jaguar rosettes, the double shrine of the Templo Mayor.
+            Blender joins the masses, cuts the reliefs, knocks chips off the edges, softens every cut a little and
+            weathers the surface, like stone handled for centuries.
+          </p>
+          <p class="mt-4 max-w-[62ch] text-[17px] leading-[1.65] text-soft">
+            A lighter copy is then baked from that carving — colour, roughness, surface detail and shadowed hollows —
+            using photographed rock (Poly Haven, CC0) turned into tezontle and basalt: gas bubbles in the red stone,
+            edges polished by handling, dirt in the recesses. In the browser a fine stone grain is laid over the bake,
+            so the surface holds when you walk right up to it.
+          </p>
+          <figure class="mt-10">
+            <img src="/stills/blender.jpg" alt="Two renders of the rook, a stepped double pyramid in red stone." width="1600" height="900" loading="lazy" />
+            <figcaption class="mt-3 font-mono text-[11px] uppercase tracking-[0.12em] text-soft">The Teocalli in Blender: the full carving, and the light model baked from it</figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section class="mt-20 grid gap-6 border-t border-line pt-8 md:mt-28 md:grid-cols-[220px_1fr] md:gap-10">
+        <p class="font-mono text-[11px] uppercase tracking-[0.12em] text-soft">03 · Stone that breaks</p>
+        <div>
+          <h2 class="max-w-[22ch] font-display text-[30px] font-light leading-[1.05] tracking-[-0.02em] md:text-[40px]">A capture is a blow.</h2>
+          <p class="mt-5 max-w-[62ch] text-[17px] leading-[1.65] text-soft">
+            Every piece was broken in advance in Blender, cut into chunks whose fresh faces are raw stone. When one is
+            taken it bursts along the line of the attack; the chunks tumble, knock against the pieces still standing,
+            settle, and crumble into dust. The grit stays where it fell for the rest of the game. The floor gives way
+            too: the first blow cracks the slab, a second shatters it into a crater. A big capture cuts to a low
+            camera and slows time for a beat. Undo puts everything back.
+          </p>
+          <figure class="mt-10">
+            <img src="/stills/blow.jpg" alt="A red stone bishop strikes a black knight, which breaks apart in mid-air." width="2400" height="1350" loading="lazy" />
+            <figcaption class="mt-3 font-mono text-[11px] uppercase tracking-[0.12em] text-soft">A Cuauhtli takes an Ocelotl</figcaption>
+          </figure>
+          <div class="mt-6 grid gap-6 md:grid-cols-2">
+            <figure>
+              <img src="/stills/shards.jpg" alt="Six pieces cut into chunks, their pale inner faces showing." width="1600" height="1067" loading="lazy" class="aspect-[3/2] object-cover" />
+              <figcaption class="mt-3 font-mono text-[11px] uppercase tracking-[0.12em] text-soft">Broken in advance. The pale faces are the inside of the stone</figcaption>
+            </figure>
+            <figure>
+              <img src="/stills/floor.jpg" alt="A cracked board square with a crater, scattered grit around it." width="2400" height="1350" loading="lazy" class="aspect-[3/2] object-cover" />
+              <figcaption class="mt-3 font-mono text-[11px] uppercase tracking-[0.12em] text-soft">A square struck twice</figcaption>
+            </figure>
+          </div>
+        </div>
+      </section>
+
+      <section class="mt-20 grid gap-6 border-t border-line pt-8 md:mt-28 md:grid-cols-[220px_1fr] md:gap-10">
+        <p class="font-mono text-[11px] uppercase tracking-[0.12em] text-soft">04 · Two places</p>
+        <div>
+          <h2 class="max-w-[22ch] font-display text-[30px] font-light leading-[1.05] tracking-[-0.02em] md:text-[40px]">A plaza, and a summit above the forest.</h2>
+          <p class="mt-5 max-w-[62ch] text-[17px] leading-[1.65] text-soft">
+            Play on the plaza of the sacred precinct of Tenochtitlan, between the Templo Mayor, its shrines and the
+            serpent wall — at night by the braziers, or at the golden hour. Or on the summit of a temple at Calakmul,
+            in Campeche, with the canopy below, mist in the trees and other temples breaking through it. Neither is a
+            reconstruction: they are sets built in the spirit of the places. You can also come down from the overview
+            and walk the board among the pieces.
+          </p>
+          <figure class="mt-10">
+            <img src="/stills/calakmul.jpg" alt="The board on a temple summit by day, stone temples rising out of a green forest canopy." width="2400" height="1350" loading="lazy" />
+            <figcaption class="mt-3 font-mono text-[11px] uppercase tracking-[0.12em] text-soft">Calakmul by day</figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section class="mt-20 grid gap-6 border-t border-line pt-8 md:mt-28 md:grid-cols-[220px_1fr] md:gap-10">
+        <p class="font-mono text-[11px] uppercase tracking-[0.12em] text-soft">05 · Sound and the machine</p>
+        <div>
+          <h2 class="max-w-[22ch] font-display text-[30px] font-light leading-[1.05] tracking-[-0.02em] md:text-[40px]">Real recordings, a real engine.</h2>
+          <p class="mt-5 max-w-[62ch] text-[17px] leading-[1.65] text-soft">
+            Every sound is a recording, nothing synthesised: stone grinding on stone, rock cracking, fire, the night,
+            the forest and its howler monkeys, the wind on the summit — all released into the public domain on
+            Freesound, plus one Kenney pack. Each sits in the scene, so a capture across the board sounds across the board.
+          </p>
+          <p class="mt-4 max-w-[62ch] text-[17px] leading-[1.65] text-soft">
+            The opponent is Stockfish 19, the open-source chess engine, compiled to WebAssembly and running entirely in
+            your browser at three levels. Or play a friend on the same screen: the board turns to whoever moves next.
+          </p>
+        </div>
+      </section>
+
+      <section class="mt-20 grid gap-6 border-t border-line pt-8 md:mt-28 md:grid-cols-[220px_1fr] md:gap-10">
+        <p class="font-mono text-[11px] uppercase tracking-[0.12em] text-soft">06 · Learn to play</p>
+        <div>
+          <h2 class="max-w-[22ch] font-display text-[30px] font-light leading-[1.05] tracking-[-0.02em] md:text-[40px]">From foot soldier to Tlatoani.</h2>
+          <p class="mt-5 max-w-[62ch] text-[17px] leading-[1.65] text-soft">
+            Twenty-six lessons on the same board: how each stone moves, the rules, tactics, mates against the machine
+            and a little strategy. Every position and every answer was checked with the engine. A lesson earns up to
+            three cacao beans — the small change of the Mexica — and the beans add up to a rank. Your progress, and the
+            rule each lesson taught you, stay in this browser.
+          </p>
+          <figure class="mt-10">
+            <img src="/stills/learn.jpg" alt="The lessons panel beside the Templo Mayor: a rank, chapters, and three beans per lesson." width="1440" height="900" loading="lazy" />
+            <figcaption class="mt-3 font-mono text-[11px] uppercase tracking-[0.12em] text-soft">The lessons</figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section class="mt-20 grid gap-6 border-t border-line pt-8 md:mt-28 md:grid-cols-[220px_1fr] md:gap-10">
+        <p class="font-mono text-[11px] uppercase tracking-[0.12em] text-soft">07 · Made with</p>
+        <div class="max-w-[62ch] text-[15px] leading-[1.65] text-soft">
+          <p>Blender 5.2 and Python for the stone; three.js for the 3D; chess.js for the rules; React, Vite and Tailwind
+            for the rest. Type: Funnel Display, Funnel Sans and Fragment Mono. Designed and built by Alia Studio, with Claude Code.</p>
+          <dl class="mt-8 grid gap-x-8 gap-y-4 md:grid-cols-[170px_1fr]">
+            <dt class="font-mono text-[11px] uppercase tracking-[0.12em]">Stone scans</dt>
+            <dd>rock_05, dark_rock, large_grey_tiles, mossy_sandstone — <a class="underline" href="https://polyhaven.com">Poly Haven</a>, CC0.</dd>
+            <dt class="font-mono text-[11px] uppercase tracking-[0.12em]">Sounds</dt>
+            <dd>Freesound and Kenney, CC0. <a class="underline" href="/audio/CREDITS.txt">Every recording and its author</a>.</dd>
+            <dt class="font-mono text-[11px] uppercase tracking-[0.12em]">Chess engine</dt>
+            <dd>Stockfish 19, WebAssembly build by Nathan Rugg, GNU GPL v3 — <a class="underline" href="/engine/COPYING.txt">licence</a>,
+              source at <a class="underline" href="https://github.com/official-stockfish/Stockfish">official-stockfish/Stockfish</a>
+              and <a class="underline" href="https://github.com/nmrugg/stockfish.js">nmrugg/stockfish.js</a>.</dd>
+            <dt class="font-mono text-[11px] uppercase tracking-[0.12em]">Fonts</dt>
+            <dd>Google Fonts, SIL Open Font License.</dd>
+            <dt class="font-mono text-[11px] uppercase tracking-[0.12em]">This game</dt>
+            <dd>The code and the Blender scripts: <a class="underline" href="https://github.com/alrc21/mexica-chess">github.com/alrc21/mexica-chess</a>.</dd>
+          </dl>
+        </div>
+      </section>
+
+      <footer class="mt-24 flex flex-col items-start gap-6 border-t border-line pt-10 md:flex-row md:items-end md:justify-between">
+        <p class="max-w-[24ch] font-display text-[30px] font-light leading-[1.05] tracking-[-0.02em] md:text-[40px]">An experiment by <a class="underline decoration-1" href="https://alia.studio">Alia Studio</a>.</p>
+        <a href="/" class="rounded-full bg-ink px-7 py-3 text-[15px] text-paper transition-opacity duration-300 hover:opacity-85">Play Mexica Chess</a>
+      </footer>
+    </main>
+  </body>
+</html>

@@ -80,9 +80,25 @@ Each phase ends with before/after screenshots in `docs/evidence/`.
   Calakmul: the board on a Maya summit above a rain forest drawn per pixel
   (two layers of crowns in relief near, painted far), mist, temples breaking
   through the trees, a moon by night; jungle, howlers and wind in the sound.
-- [ ] **6. Ship.** KTX2 textures (`scripts/ktx2.mjs` is ready), the Maya
-  temples modelled in Blender instead of blocks, a real-iPhone pass,
-  deployment.
+- [x] **6a. Responsive, two players, a floor that breaks.** The click hitch
+  was shaders warmed for the screen but drawn into the composer's buffer (the
+  first capture compiled them: a 416 ms freeze) and the tile shader recompiled
+  on every selection; the hidden intro controls caught clicks over the lower
+  left of the board. Now no shader links during play and no long tasks
+  (`scripts/jank.mjs`). Two players: the board turns to whoever moves next; a
+  click hurries a camera flight. The broken slab is a morph target: it comes in
+  whole and gives way at the blow, its cuts dark with depth, the crater's bits
+  thrown as rubble (`scripts/floor.mjs`).
+- [x] **6b. Learn to play.** 26 lessons in five chapters on the real board
+  (drills, rules, tactics, mates against the engine, strategy), each checked
+  with chess.js and Stockfish (`scripts/lessons.mjs`); cacao per lesson, a
+  rank, a streak and a codex of what you know, in localStorage
+  (`scripts/learn.mjs`).
+- [x] **6c. About and ship.** `/about` (a static second page), public repo,
+  Vercel.
+- [ ] **7. Next.** KTX2 textures (`scripts/ktx2.mjs` is ready), the Maya
+  temples modelled in Blender instead of blocks, a real-iPhone pass, contact
+  shadows (ambient occlusion) between piece and board.
 
 ## Budgets
 
@@ -98,9 +114,8 @@ Each phase ends with before/after screenshots in `docs/evidence/`.
 
 ## Open items (needs input)
 
-- Name and domain.
-- Optional references from Alberto: photos of stone and pieces he loves,
-  and 2–3 3D sites he considers top tier.
+- Name and domain (it ships as Mexica Chess on a vercel.app address).
+- A licence for this code (none yet: all rights reserved by default).
 - Who it is for and what it is for: a portfolio piece, a product, or both.
 
 ## Commands
@@ -115,6 +130,11 @@ node scripts/drama.mjs <dir>    # capture + mate, shot as a strip
 node scripts/views.mjs <dir>    # intro/board by day, on foot by day and night
 node scripts/fps.mjs            # uncapped fps: intro, game, on foot, day, Calakmul
 node scripts/places.mjs <dir>   # both places, both hours: intro, board, on foot
-node scripts/tiles.mjs <png>    # the tile close-up Alberto sent, at retina scale
+node scripts/tiles.mjs <png>    # the tile close-up from the review, at retina scale
+node scripts/jank.mjs           # frame gaps, long tasks and shader links around clicks and captures
+node scripts/floor.mjs <dir>    # a square struck twice: mid-break, settled, up close
+node scripts/lessons.mjs        # every lesson checked with chess.js and Stockfish
+node scripts/learn.mjs <dir>    # learn end to end: drill, a miss, progress after reload, a hunt, phone
+node scripts/about-shots.mjs    # clean frames for the About page → public/stills
 blender -b --factory-startup -P blender/fracture.py -- king   # pre-fracture a piece
 ```

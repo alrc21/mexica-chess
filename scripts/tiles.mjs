@@ -1,4 +1,4 @@
-// The framing Alberto sent: close on the e-pawn with its path lit, at retina scale.
+// The framing from the review: close on the e-pawn with its path lit, at retina scale.
 //   node scripts/tiles.mjs <out.png>
 import puppeteer from 'puppeteer-core';
 const [out = '/tmp/tiles.png'] = process.argv.slice(2);
