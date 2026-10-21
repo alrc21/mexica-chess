@@ -30,7 +30,8 @@ type Effect = (dt: number) => boolean; // false when finished
  */
 export type BoardHooks = {
   impact(at: THREE.Vector3, power: number): void;
-  scar(sq: Square, ply: number): void;
+  /** Breaks the slab under `sq`; returns the bits of floor the blow throws out. */
+  scar(sq: Square, ply: number): THREE.Object3D[];
   heal(ply: number): void;
 };
 
@@ -285,7 +286,7 @@ export function createBoard(scene: THREE.Scene, models: Models, sfx: Sfx, hooks:
     const { type, color, square } = victim.userData as { type: PieceSymbol; color: Color; square: Square };
     const at = victim.position.clone().setY(0.4);
     rubble.burst(victim, type, STONE[color], blow, power, ply);
-    hooks.scar(square, ply);
+    rubble.fling(hooks.scar(square, ply), blow, power, ply);
     sfx('crack', at, 1);
     sfx('boom', at, 0.55 * power, 0.9 + Math.random() * 0.15);
     sfx('crumble', at, 0.8, undefined);
@@ -382,7 +383,7 @@ export function createBoard(scene: THREE.Scene, models: Models, sfx: Sfx, hooks:
       king.rotation.z = rand(-1, 1) * a * 0.6;
     });
     rubble.burst(king, 'k', STONE[king.userData.color as Color], new THREE.Vector3(), 0.45, ply);
-    hooks.scar(sq, ply);
+    rubble.fling(hooks.scar(sq, ply), new THREE.Vector3(), 1, ply);
     sfx('crack', p, 1, 0.8);
     sfx('boom', p, 1, 0.75);
     sfx('crumble', p, 1, 0.85);

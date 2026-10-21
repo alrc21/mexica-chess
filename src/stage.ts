@@ -82,6 +82,8 @@ export type Stage = {
   setCursor(pointer: boolean): void;
   /** Where a square's centre lands on screen, in CSS pixels (used by the browser tests). */
   project(sq: Square, height?: number): { x: number; y: number };
+  /** Browser tests: hold the camera at `pos` looking at `look` (orbit controls stay live). */
+  frame(pos: [number, number, number], look: [number, number, number], fov?: number): void;
 };
 
 export type StageEvents = {
@@ -241,14 +243,20 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
       const m = o as THREE.Mesh;
       if (!m.isMesh) return;
       m.material = (m.material as THREE.Material).name === 'interior' ? interiorOf[s.stone]! : exterior;
-      m.receiveShadow = true;
+      m.receiveShadow = m.castShadow = true; // the rim shades the plates sunk below it
     });
     return obj;
   };
-  const scar = (sq: Square, ply: number) => {
+  /**
+   * The blow breaks the floor: the broken slab comes in looking whole (its
+   * morph basis), then gives way — cracks open, plates drop into a dish,
+   * overshoot and settle — and the bits it throws out of the crater are
+   * handed back to the board to fly as rubble.
+   */
+  const scar = (sq: Square, ply: number): THREE.Object3D[] => {
     const s = slabs.get(sq);
     const src = s && broken[s.variant]?.[s.stack.length - 1]; // intact → cracked → shattered
-    if (!s || !src) return;
+    if (!s || !src) return [];
     const top = s.stack[s.stack.length - 1].obj;
     const obj = dress(src, s);
     obj.position.copy(top.position);
@@ -256,7 +264,20 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
     scene.add(obj);
     top.visible = false;
     s.stack.push({ ply, obj });
+    obj.updateMatrixWorld(true);
+    const chips = obj.children.filter(c => c.name.startsWith('chip'));
+    for (const c of chips) scene.attach(c);
+    const plates: THREE.Mesh[] = [];
+    obj.traverse(o => { const m = o as THREE.Mesh; if (m.morphTargetInfluences) plates.push(m); });
+    tween(0.75, k => {
+      const t = k * 0.75;
+      const w = 1 - Math.exp(-t / 0.1) * Math.cos(t * Math.PI / 0.17);
+      for (const m of plates) m.morphTargetInfluences![0] = w;
+    });
+    audio.play('slab', { at: obj.position, gain: 0.9 });
+    audio.play('dust', { at: obj.position, gain: 0.5, delay: 0.35 });
     renderer.shadowMap.needsUpdate = true;
+    return chips;
   };
   const heal = (ply: number) => {
     for (const s of slabs.values()) {
@@ -512,6 +533,12 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
       if (mode === 'intro') setView(INTRO());
     },
     setCursor(pointer) { canvas.style.cursor = pointer ? 'pointer' : ''; },
+    frame(pos, look, fov = camera.fov) {
+      ++turn;
+      setNear(0.02);
+      setView(V(pos, look, fov));
+      toOrbit(V(pos, look, fov));
+    },
     project(sq, height = 0) {
       const p = squarePos(sq);
       p.y += height;
@@ -640,8 +667,9 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
     if (disposed) return;
     board.setShards(shards, interior);
     // Broken slabs (blender/damage.py): cracked and shattered, per variant. Missing files just mean no scars.
-    interiorOf.cantera = new THREE.MeshStandardMaterial({ color: '#b9a98f', roughness: 0.95, normalMap: grain.tezontle, normalScale: new THREE.Vector2(0.8, 0.8) });
-    interiorOf.andesite = new THREE.MeshStandardMaterial({ color: '#4a4844', roughness: 0.9, normalMap: grain.basalt, normalScale: new THREE.Vector2(0.9, 0.9) });
+    // Fresh cuts: pale at the lip, into shadow with depth (vertex colour baked by damage.py).
+    interiorOf.cantera = new THREE.MeshStandardMaterial({ color: '#c4b498', roughness: 0.95, normalMap: grain.tezontle, normalScale: new THREE.Vector2(0.8, 0.8), vertexColors: true });
+    interiorOf.andesite = new THREE.MeshStandardMaterial({ color: '#57544f', roughness: 0.9, normalMap: grain.basalt, normalScale: new THREE.Vector2(0.9, 0.9), vertexColors: true });
     broken = await Promise.all([0, 1, 2].map(v => Promise.all([1, 2].map(l =>
       gltf.loadAsync(`/models/damage/slab${v}-${l}.glb`).then(g => g.scene, () => null)))));
     if (disposed) return;

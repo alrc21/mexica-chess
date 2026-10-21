@@ -265,6 +265,39 @@ export function createRubble(scene: THREE.Scene, sfx: Sfx) {
     piles.push({ bodies, grit, gritBodies, age: 0, root, ply, settled: false });
   }
 
+  /**
+   * Bits of the floor thrown out of a crater: already in the scene, in place.
+   * They jump up and out, fall back around the hole, and crumble like the rest.
+   */
+  function fling(nodes: THREE.Object3D[], blow: THREE.Vector3, power: number, ply = 0) {
+    if (!nodes.length) return;
+    const root = new THREE.Group();
+    scene.add(root);
+    const box = new THREE.Box3();
+    const at = new THREE.Vector3();
+    for (const n of nodes) box.expandByObject(n);
+    box.getCenter(at);
+    const bodies: Body[] = [];
+    for (const node of nodes) {
+      const b = new THREE.Box3().setFromObject(node);
+      const pivot = new THREE.Object3D();
+      b.getCenter(pivot.position);
+      root.add(pivot);
+      pivot.attach(node);
+      node.traverse(o => { o.castShadow = true; });
+      const body_ = body(pivot, b);
+      const out = tmp.copy(pivot.position).sub(at).setY(0);
+      if (out.lengthSq() < 1e-6) out.set(rand(-1, 1), 0, rand(-1, 1));
+      body_.v.copy(out.normalize()).multiplyScalar(rand(0.3, 0.8)).addScaledVector(blow, 0.4 * power).setY(rand(1.1, 1.9) * (0.6 + 0.4 * power));
+      body_.w.set(rand(-1, 1), rand(-1, 1), rand(-1, 1)).normalize().multiplyScalar(rand(4, 9));
+      bodies.push(body_);
+    }
+    // They go to dust without crumbs (the piece's own grit already litters the square): no grit mesh drawn.
+    const grit = new THREE.InstancedMesh(GRIT, undefined, 0);
+    puff(new THREE.Vector3(at.x, 0, at.z), 10, 0.7, 0.45);
+    piles.push({ bodies, grit, gritBodies: [], age: 0, root, ply, settled: false });
+  }
+
   /** A settled chunk goes to dust: it shrinks inside a puff and leaves crumbs. */
   function crumble(pile: Pile, b: Body, dt: number) {
     if (b.crumble === undefined) {
@@ -340,6 +373,7 @@ export function createRubble(scene: THREE.Scene, sfx: Sfx) {
 
   return {
     burst,
+    fling,
     puff,
     /** Half-width of the ground (Infinity on the plaza); beyond it rubble falls away. */
     setEdge(e: number) { edge = e; },

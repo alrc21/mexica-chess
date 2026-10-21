@@ -6,9 +6,13 @@
 Reads blender/out/slab/slab<v>-cantera.glb (andesite has the same geometry),
 seals its underside and cuts it with jagged vertical cracks — 2D Voronoi cells
 around an impact point, extruded into prisms — then writes
-blender/out/slab/damage<v>-<L>.glb for L = 1 (cracked) and 2 (shattered): one
-merged mesh, materials "exterior" (original faces and UVs, so the slab bake
-still maps) and "interior" (fresh cuts, planar UVs × 4). Same space as the slab.
+blender/out/slab/damage<v>-<L>.glb for L = 1 (cracked) and 2 (shattered):
+one merged mesh in the unbroken pose with a morph target "settled" (cracks
+open, plates tipped into a dish, lips bevelled — the runtime drives it at the
+moment of the blow), plus "chip<i>" objects, the bits the blow throws out of
+the crater. Materials "exterior" (original faces and UVs, so the slab bake
+still maps) and "interior" (fresh cuts, planar UVs × 4, vertex colour darkening
+with depth). Same space as the slab.
 Ship with
 
     npx gltf-transform optimize blender/out/slab/damage<v>-<L>.glb public/models/damage/slab<v>-<L>.glb \
@@ -146,21 +150,37 @@ def split(slab, mats, poly):
     return subs
 
 
-def settle(sub, c0, gap, tilt, sink):
-    """Open the crack (move away from the impact), tip the inner side down about
-    the piece's outer edge (nothing rises above the slab), then sink it."""
+def settled(sub, c0, gap, tilt, sink, chamfer):
+    """Where each vertex of a fragment ends up once the slab has given way:
+    the crack opens (away from the impact), the inner side tips down about the
+    fragment's outer edge (nothing rises above the slab), the whole sinks, and
+    the lip of every cut breaks back into a bevel, so the crack reads as a
+    groove from across the board. The fragment itself is left untouched: its
+    pose is the morph target's basis, an unbroken slab."""
     ctr = sum((v.co for v in sub.verts), Vector()) / len(sub.verts)
     d = Vector((ctr.x - c0.x, ctr.y - c0.y, 0))
     d = d.normalized() if d.length > 1e-4 else Vector((1, 0, 0))
     rr = [(Vector((v.co.x - c0.x, v.co.y - c0.y, 0))).dot(d) for v in sub.verts]
     top = max(rr)
     k = math.tan(math.radians(tilt))
+    lip = max(v.co.z for v in sub.verts) - 0.007
+    out = []
     for v, r in zip(sub.verts, rr):
-        v.co += d * gap
-        v.co.z += k * (r - top) - sink
+        co = v.co.copy()
+        if chamfer and co.z > lip and any(f.material_index == 1 for f in v.link_faces):
+            inward = Vector((ctr.x - co.x, ctr.y - co.y, 0))
+            if inward.length > 1e-4:
+                co += inward.normalized() * chamfer * (co.z - lip) / 0.007
+                co.z -= chamfer * 0.6 * (co.z - lip) / 0.007
+        co += d * gap
+        co.z += k * (r - top) - sink
+        out.append(co)
+    return out
 
 
 def build(v, level, slab, mats):
+    """Fragments of one broken slab: [(bmesh, settled coords)] that stay, and
+    the small central bits the blow throws out of the crater (flung at runtime)."""
     rng = random.Random(1009 * v + 31 * level)
     c0 = Vector((rng.uniform(-0.07, 0.07), rng.uniform(-0.07, 0.07)))
 
@@ -170,53 +190,109 @@ def build(v, level, slab, mats):
                 for a in (turn + 2 * math.pi * (i + rng.uniform(-0.18, 0.18)) / n for i in range(n))]
 
     if level == 1:
-        pts, inner = ring(rng.randint(5, 6), 0.28, 0.42), 0
+        core = ring(3, 0.04, 0.07)
+        pts = core + ring(rng.randint(5, 6), 0.3, 0.42)
     else:
         core = ring(4, 0.05, 0.08)
-        pts, inner = core + ring(rng.randint(6, 7), 0.26, 0.34), len(core)
+        pts = core + ring(rng.randint(6, 7), 0.26, 0.34)
+    inner = len(core)
     pieces = []  # (bmesh, from an inner cell?)
     for i, poly in enumerate(voronoi(pts)):
         for sub in split(slab, mats, jagged(poly, seed=v * 3.7 + level)):
             pieces.append((sub, i < inner))
-    if level == 2:  # blow out 1–3 of the small central fragments: the crater
-        core = sorted((p for p in pieces if p[1]), key=lambda p: abs(p[0].calc_volume()))
-        for p in core[:rng.randint(1, 2)]:
-            pieces.remove(p)
-            p[0].free()
+    # The blow throws the smallest central bits out: the crater.
+    core = sorted((p for p in pieces if p[1]), key=lambda p: abs(p[0].calc_volume()))
+    thrown = [p[0] for p in core[:1 if level == 1 else rng.randint(2, 3)]]
+    kept = []
     for sub, central in pieces:
-        if level == 1:
-            settle(sub, c0, rng.uniform(0.0015, 0.003), rng.uniform(0.3, 1.5), rng.uniform(0, 0.0015))
+        if sub in thrown:
+            continue
+        if level == 1 and central:
+            pose = settled(sub, c0, rng.uniform(0.003, 0.005), rng.uniform(5, 9), rng.uniform(0.008, 0.016), 0.004)
+        elif level == 1:
+            pose = settled(sub, c0, rng.uniform(0.008, 0.013), rng.uniform(2.5, 5), rng.uniform(0.002, 0.007), 0.006)
         elif central:
-            settle(sub, c0, rng.uniform(0.001, 0.003), rng.uniform(3, 7), rng.uniform(0.01, 0.025))
+            pose = settled(sub, c0, rng.uniform(0.003, 0.006), rng.uniform(8, 14), rng.uniform(0.03, 0.045), 0.005)
         else:
-            settle(sub, c0, rng.uniform(0.003, 0.006), rng.uniform(1, 2.5), rng.uniform(0.001, 0.004))
-    return [p[0] for p in pieces]
+            pose = settled(sub, c0, rng.uniform(0.013, 0.02), rng.uniform(3, 6.5), rng.uniform(0.003, 0.01), 0.008)
+        kept.append((sub, pose))
+    return kept, thrown
 
 
-def merge(subs, name, mats):
-    """One mesh: exterior smooth with its UVs, interior flat with planar UVs ×4."""
-    bm = bmesh.new()
-    uv = bm.loops.layers.uv.new("UVMap")
-    for sub in subs:
-        suv = sub.loops.layers.uv.active
-        vmap = {v: bm.verts.new(v.co) for v in sub.verts}
-        for f in sub.faces:
-            nf = bm.faces.new([vmap[v] for v in f.verts])
-            nf.material_index = f.material_index
-            for a, b in zip(nf.loops, f.loops):
-                a[uv].uv = b[suv].uv
-        sub.free()
-    bm.normal_update()
+def shade(bm, uv):
+    """Exterior faces smooth with their bake UVs; interior faces flat, planar UVs ×4,
+    and a vertex colour that darkens with depth below the slab's top — a fresh cut
+    is lit only at the lip and goes to shadow inside, so an open crack reads as a dark void."""
+    col = bm.loops.layers.color.new("Color")
+    top = max(v.co.z for v in bm.verts)
     for f in bm.faces:
         f.smooth = f.material_index == 0
+        for lp in f.loops:
+            if f.material_index != 1:
+                lp[col] = (1, 1, 1, 1)
+                continue
+            t = max(0.0, min(1.0, (lp.vert.co.z - (top - 0.04)) / 0.04))
+            c = 0.04 + 0.38 * t ** 2
+            lp[col] = (c, c, c, 1)
         if f.material_index != 1:
             continue
         a = max(range(3), key=lambda k: abs(f.normal[k]))
         u, w = [k for k in range(3) if k != a]
         for lp in f.loops:
             lp[uv].uv = (lp.vert.co[u] * 4, lp.vert.co[w] * 4)
+
+
+def copy_into(bm, sub, uv):
+    suv = sub.loops.layers.uv.active
+    vmap = {v: bm.verts.new(v.co) for v in sub.verts}
+    for f in sub.faces:
+        nf = bm.faces.new([vmap[v] for v in f.verts])
+        nf.material_index = f.material_index
+        for a, b in zip(nf.loops, f.loops):
+            a[uv].uv = b[suv].uv
+    return [vmap[v] for v in sub.verts]
+
+
+def colored(ob):
+    """The depth shading is the mesh's one colour set: exported as COLOR_0."""
+    attrs = ob.data.color_attributes
+    attrs.active_color = attrs["Color"]
+    attrs.render_color_index = 0
+    return ob
+
+
+def merge(kept, name, mats):
+    """One mesh in the unbroken pose, with a shape key "settled" holding the broken one."""
+    bm = bmesh.new()
+    uv = bm.loops.layers.uv.new("UVMap")
+    pose = []
+    for sub, coords in kept:
+        copy_into(bm, sub, uv)
+        pose += coords
+        sub.free()
+    bm.normal_update()
+    shade(bm, uv)
     bmesh.ops.triangulate(bm, faces=[f for f in bm.faces if len(f.verts) > 3])  # tangents need triangles
-    ob = kit.from_bm(name, bm)
+    ob = colored(kit.from_bm(name, bm))
+    for m in mats:
+        ob.data.materials.append(m)
+    ob.shape_key_add(name="Basis")
+    key = ob.shape_key_add(name="settled")
+    for i, co in enumerate(pose):
+        key.data[i].co = co
+    return ob
+
+
+def chip(sub, name, mats):
+    """A thrown bit as its own object, in place."""
+    bm = bmesh.new()
+    uv = bm.loops.layers.uv.new("UVMap")
+    copy_into(bm, sub, uv)
+    sub.free()
+    bm.normal_update()
+    shade(bm, uv)
+    bmesh.ops.triangulate(bm, faces=[f for f in bm.faces if len(f.verts) > 3])
+    ob = colored(kit.from_bm(name, bm))
     for m in mats:
         ob.data.materials.append(m)
     return ob
@@ -239,14 +315,17 @@ def main(v):
     for m in mats:
         slab.data.materials.append(m)
     for level in (1, 2):
-        subs = build(v, level, slab, mats)
-        ob = merge(subs, f"damage{v}-{level}", mats)
-        check(ob, len(subs))
+        kept, thrown = build(v, level, slab, mats)
+        ob = merge(kept, f"damage{v}-{level}", mats)
+        check(ob, len(kept))
+        chips = [chip(sub, f"chip{i}", mats) for i, sub in enumerate(thrown)]
         bpy.ops.object.select_all(action="DESELECT")
-        ob.select_set(True)
+        for o in [ob, *chips]:
+            o.select_set(True)
         bpy.ops.export_scene.gltf(filepath=str(OUT / f"damage{v}-{level}.glb"), export_format="GLB", use_selection=True,
-                                  export_apply=True, export_tangents=True, export_materials="EXPORT")
-        kit.remove([ob])
+                                  export_apply=False, export_tangents=True, export_materials="EXPORT",
+                                  export_vertex_color="ACTIVE", export_all_vertex_colors=False, export_morph=True, export_morph_normal=True)
+        kit.remove([ob, *chips])
 
 
 def preview():
@@ -258,7 +337,10 @@ def preview():
     for v in range(3):
         for level in (1, 2):
             bpy.ops.import_scene.gltf(filepath=str(OUT / f"damage{v}-{level}.glb"))
-            ob = bpy.context.selected_objects[0]
+            for o in bpy.context.selected_objects:
+                o.hide_render = o.name.startswith("chip")  # thrown out of the crater at runtime
+            ob = next(o for o in bpy.context.selected_objects if o.data.shape_keys)
+            ob.data.shape_keys.key_blocks["settled"].value = 1  # broken, as it settles in the game
             ob.location = ((v - 1) * 1.15, (level - 1.5) * -1.15, 0)
             for slot in ob.material_slots:
                 slot.material = textured if slot.material.name.startswith("exterior") else pale
@@ -280,7 +362,8 @@ def preview():
     sc.camera = cam
     sc.render.resolution_x, sc.render.resolution_y = 1500, 1000
     sc.cycles.samples, sc.cycles.use_denoising = 48, True
-    sc.render.filepath = str(kit.HERE.parent / "docs" / "evidence" / "phase5-damage.png")
+    sc.render.filepath = str(kit.HERE.parent / "docs" / "evidence" / "phase6-damage.jpg")
+    sc.render.image_settings.file_format = "JPEG"
     bpy.ops.render.render(write_still=True)
 
 
