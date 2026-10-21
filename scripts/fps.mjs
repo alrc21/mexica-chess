@@ -1,13 +1,14 @@
 // Uncapped frame rate in the game view: vsync off so the number is a real budget.
 //   node scripts/fps.mjs [base]
 import puppeteer from 'puppeteer-core';
+//   PHONE=1 node scripts/fps.mjs 'http://localhost:3100/?phone=1'   — a phone's viewport (390×844 @3x)
 const base = process.argv[2] ?? 'http://localhost:3100/';
 const b = await puppeteer.launch({
   executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true,
   args: ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist', '--disable-gpu-vsync', '--disable-frame-rate-limit'],
 });
 const p = await b.newPage();
-await p.setViewport({ width: 1440, height: 900, deviceScaleFactor: 2 });
+await p.setViewport(process.env.PHONE ? { width: 390, height: 844, deviceScaleFactor: 3, isMobile: true, hasTouch: true } : { width: 1440, height: 900, deviceScaleFactor: 2 });
 await p.goto(base, { waitUntil: 'load' });
 await p.waitForFunction(() => window.__game, { timeout: 60000 });
 await new Promise(r => setTimeout(r, 2500));

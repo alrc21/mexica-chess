@@ -46,6 +46,15 @@ STONES = {
         blotch="#a59479", edge="#d8cab0", cavity="#6a5c4a", pore="#4a4034",
         rough=(0.72, 0.95), polish=0.12, pores=dict(scale=70, size=0.12, cover=0.2),
     ),
+    # Maya limestone, a thousand years in the rain forest: pale where the rain
+    # washes it, lichen-dark in the joints, black streaks run down from every lip.
+    "limestone": dict(
+        scan="mossy_sandstone", scale=7,
+        ramp=[(0.0, "#2e2f28"), (0.35, "#6c6a5f"), (0.7, "#a49f90"), (1.0, "#cdc7b6")],
+        blotch="#3d4536", edge="#ddd7c7", cavity="#1d2219", pore="#15160f",
+        rough=(0.82, 0.98), polish=0.0, pores=dict(scale=34, size=0.14, cover=0.3),
+        streaks="#26271f",
+    ),
     # Board, dark squares: grey andesite, fissured.
     "andesite": dict(
         scan="dark_rock", scale=3.5,
@@ -607,6 +616,20 @@ def stone_material(name):
     g.link(blot.outputs["Fac"], bf.inputs["Value"])
 
     c = mix(ramp.outputs["Color"], s["blotch"], bf.outputs["Result"])
+    if "streaks" in s:
+        # Rain streaks: noise stretched tall (fine across, long down the wall).
+        sm = g("ShaderNodeMapping")
+        sm.inputs["Scale"].default_value = (90, 90, 3.5)
+        g.link(tc.outputs["Object"], sm.inputs["Vector"])
+        sn = g("ShaderNodeTexNoise")
+        sn.inputs["Scale"].default_value = 1
+        sn.inputs["Detail"].default_value = 3
+        g.link(sm.outputs["Vector"], sn.inputs["Vector"])
+        sf = g("ShaderNodeMapRange")
+        sf.inputs["From Min"].default_value, sf.inputs["From Max"].default_value = 0.55, 0.72
+        sf.inputs["To Max"].default_value = 0.75
+        g.link(sn.outputs["Fac"], sf.inputs["Value"])
+        c = mix(c, s["streaks"], sf.outputs["Result"])
     c = mix(c, s["edge"], edge.outputs["Result"])
     c = mix(c, s["cavity"], cav.outputs["Value"])
     c = mix(c, s["pore"], pores.outputs["Value"])

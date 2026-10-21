@@ -16,17 +16,17 @@ import { createJungle } from './jungle';
 import { MODEL, STONE } from './lore';
 import { createWalk, type Solid } from './walk';
 
-type Stone = 'tezontle' | 'basalt' | 'cantera' | 'andesite';
+type Stone = 'tezontle' | 'basalt' | 'cantera' | 'andesite' | 'limestone';
 
 /**
  * The bake carries the carving; a tiling grain normal carries the stone up
  * close, so the surface holds at any distance without bigger textures.
  * Scale is per asset (how much surface its UVs cover), strength per stone.
  */
-const GRAIN_MAP: Record<Stone, 'tezontle' | 'basalt'> = { tezontle: 'tezontle', cantera: 'tezontle', basalt: 'basalt', andesite: 'basalt' };
-const GRAIN_STRENGTH: Record<Stone, number> = { tezontle: 0.9, cantera: 0.6, basalt: 0.35, andesite: 0.5 };
+const GRAIN_MAP: Record<Stone, 'tezontle' | 'basalt'> = { tezontle: 'tezontle', cantera: 'tezontle', basalt: 'basalt', andesite: 'basalt', limestone: 'tezontle' };
+const GRAIN_STRENGTH: Record<Stone, number> = { tezontle: 0.9, cantera: 0.6, basalt: 0.35, andesite: 0.5, limestone: 0.3 };
 // Contrast for play: red reads red, the dark squares sit between black basalt and pale cantera.
-const TINT: Record<Stone, number> = { tezontle: 1.2, basalt: 1.0, cantera: 0.9, andesite: 1.45 };
+const TINT: Record<Stone, number> = { tezontle: 1.2, basalt: 1.0, cantera: 0.9, andesite: 1.45, limestone: 1.0 };
 
 function addGrain(mat: THREE.MeshStandardMaterial, map: THREE.Texture, scale: number, strength: number) {
   mat.onBeforeCompile = shader => {
@@ -93,10 +93,19 @@ export type StageEvents = {
   onHover(hit: Hit): void;
 };
 
+/**
+ * Phones get a lighter stage: fewer pixels (the adaptive resolution still
+ * watches from there), half-size shadow maps, a coarser forest, ground
+ * textures at 1K. The stone itself — pieces, board, bakes — is the same.
+ */
+const PHONE_PARAM = typeof location !== 'undefined' ? new URLSearchParams(location.search).get('phone') : null; // ?phone=1/0 to compare
+export const PHONE = PHONE_PARAM ? PHONE_PARAM === '1'
+  : typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches && Math.min(screen.width, screen.height) < 820;
+
 export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
   // Retina pixels are small enough to hide jaggies; low-density screens get MSAA instead.
-  let dpr = Math.min(window.devicePixelRatio, 2);
+  let dpr = Math.min(window.devicePixelRatio, PHONE ? 1.5 : 2);
   renderer.setPixelRatio(dpr);
   renderer.toneMapping = THREE.ACESFilmicToneMapping; // more bite than AgX: deep blacks, saturated oxide red
   renderer.toneMappingExposure = 1.22;
@@ -105,7 +114,7 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
   renderer.shadowMap.autoUpdate = false; // re-rendered only while stone moves
 
   const scene = new THREE.Scene();
-  const atmo = createAtmosphere(scene, renderer, MONUMENT.z);
+  const atmo = createAtmosphere(scene, renderer, MONUMENT.z, PHONE ? 2048 : 4096);
 
   const camera = new THREE.PerspectiveCamera(30, 1, 0.1, 600);
   const controls = new OrbitControls(camera, canvas);
@@ -155,6 +164,7 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
     return t;
   };
   const grain = { tezontle: tile('/textures/grain-tezontle.jpg', 1), basalt: tile('/textures/grain-basalt.jpg', 1) };
+  const FLAG = (m: 'diff' | 'nor' | 'rough') => `/textures/flagstone-${m}${PHONE ? '-1k' : ''}.jpg`;
 
   // ── Two places: the plaza of Tenochtitlan, and a summit above the forest of Calakmul ─
   const tenochtitlan = new THREE.Group();
@@ -167,9 +177,9 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
     new THREE.PlaneGeometry(400, 400),
     new THREE.MeshStandardMaterial({
       // Cut flagstones about a board square each, so the plaza and the board share a measure.
-      map: tile('/textures/flagstone-diff.jpg', 100, true),
-      normalMap: tile('/textures/flagstone-nor.jpg', 100),
-      roughnessMap: tile('/textures/flagstone-rough.jpg', 100),
+      map: tile(FLAG('diff'), 100, true),
+      normalMap: tile(FLAG('nor'), 100),
+      roughnessMap: tile(FLAG('rough'), 100),
       color: '#6e655c',
       normalScale: new THREE.Vector2(1.5, 1.5),
     }),
@@ -227,6 +237,7 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
   let board: Board | null = null;
   let disposed = false;
   let jungleUpdate: ((t: number, mist: THREE.Color) => void) | null = null;
+  let setTemples: ((m: Record<'temple0' | 'temple1' | 'acropolis', THREE.Object3D>) => void) | null = null;
 
   // ── Scars: a slab where a piece was destroyed is swapped for a broken one ─
   // Each square keeps a stack (intact, cracked, shattered) tagged by ply, so
@@ -640,10 +651,11 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
     // Calakmul: the summit, the canopy, the mist, the temples in the trees.
     const jungle = createJungle({
       map: tile('/textures/limestone-diff.jpg', 1, true), normal: tile('/textures/limestone-nor.jpg', 1), rough: tile('/textures/limestone-rough.jpg', 1),
-      floor: { map: tile('/textures/flagstone-diff.jpg', 1, true), normal: tile('/textures/flagstone-nor.jpg', 1), rough: tile('/textures/flagstone-rough.jpg', 1) },
-    });
+      floor: { map: tile(FLAG('diff'), 1, true), normal: tile(FLAG('nor'), 1), rough: tile(FLAG('rough'), 1) },
+    }, PHONE ? 300 : 560);
     calakmul.add(jungle.group);
     jungleUpdate = jungle.update;
+    setTemples = jungle.setTemples;
 
     const models = { w: {}, b: {} } as Models;
     (['w', 'b'] as Color[]).forEach((c, i) => kinds.forEach((k, j) => { models[c][k] = pieces[i][j]; }));
@@ -688,6 +700,12 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
     scene.add(...samples);
     await inComposer(() => renderer.compileAsync(scene, camera));
     scene.remove(...samples);
+
+    // Calakmul's temples, from Blender: only that place shows them, so they come last.
+    try {
+      const [temple0, temple1, acropolis] = await Promise.all(['temple0', 'temple1', 'acropolis'].map(m => load(`maya/${m}`, 'limestone', 6)));
+      if (!disposed) setTemples?.({ temple0, temple1, acropolis });
+    } catch { /* no temples: the forest stands alone */ }
   })();
 
   // ── Post: bloom only catches what burns ───────────────────────────────────

@@ -102,9 +102,9 @@ function canopySurface(size: number, segments: number, relief: boolean) {
 }
 
 /** Near the pyramid every crown stands up in relief; beyond, the same forest is painted flat. */
-function canopy() {
+function canopy(segments: number) {
   const g = new THREE.Group();
-  g.add(canopySurface(420, 560, true), canopySurface(1600, 160, false));
+  g.add(canopySurface(420, segments, true), canopySurface(1600, 160, false));
   return g;
 }
 
@@ -203,41 +203,8 @@ function summit(material: THREE.Material, floor: THREE.Material) {
   return g;
 }
 
-/** A Maya temple breaking through the canopy: steep tiers, a stair, a shrine and a roof comb. */
-function temple(material: THREE.Material, base: number, tiers: number, tierH: number, seed: number) {
-  const parts: THREE.BufferGeometry[] = [];
-  let half = base, y = CANOPY_Y - 6;
-  for (let i = 0; i < tiers; i++) {
-    parts.push(block(half * 2, tierH, half * 2, 0, y, 0));
-    parts.push(block(half * 2 + 0.6, tierH * 0.12, half * 2 + 0.6, 0, y + tierH * 0.88, 0));
-    y += tierH;
-    half *= 0.83;
-  }
-  const stairW = half * 0.9;
-  const run = (y - (CANOPY_Y - 6)) * 0.62;
-  for (let i = 0; i < 40; i++) {
-    const t = i / 40;
-    parts.push(block(stairW, (y - (CANOPY_Y - 6)) / 40, run / 40 + 0.05, 0, CANOPY_Y - 6 + t * (y - (CANOPY_Y - 6)), base - t * (base - half) + run / 80));
-  }
-  // Shrine with a dark doorway, then the roof comb, pierced.
-  parts.push(block(half * 1.5, half * 0.9, half * 1.1, 0, y, 0));
-  parts.push(block(half * 1.7, half * 0.12, half * 1.3, 0, y + half * 0.9, 0));
-  const comb = y + half * 1.02;
-  parts.push(block(half * 1.3, half * 0.35, half * 0.35, 0, comb, -half * 0.1));
-  parts.push(block(half * 0.32, half * 0.75, half * 0.35, -half * 0.5, comb + half * 0.35, -half * 0.1));
-  parts.push(block(half * 0.32, half * 0.75, half * 0.35, half * 0.5, comb + half * 0.35, -half * 0.1));
-  parts.push(block(half * 1.3, half * 0.3, half * 0.35, 0, comb + half * 1.1, -half * 0.1));
-  // Lichen-dark and moss-green: limestone that has stood in the rain forest for a thousand years.
-  const geo = weather(worldUv(mergeGeometries(parts.map(g => g.toNonIndexed())), 0.08), CANOPY_Y - 6, comb + half * 1.4, seed, 0.62);
-  const mesh = new THREE.Mesh(geo, material);
-  const door = new THREE.Mesh(new THREE.PlaneGeometry(half * 0.35, half * 0.55), new THREE.MeshBasicMaterial({ color: '#050403' }));
-  door.position.set(0, y + half * 0.28, half * 0.551);
-  mesh.add(door);
-  return mesh;
-}
-
 type Maps = { map: THREE.Texture; normal: THREE.Texture; rough: THREE.Texture };
-export function createJungle(textures: Maps & { floor: Maps }) {
+export function createJungle(textures: Maps & { floor: Maps }, segments = 560) {
   const group = new THREE.Group();
   const stone = new THREE.MeshStandardMaterial({
     map: textures.map, normalMap: textures.normal, roughnessMap: textures.rough,
@@ -247,25 +214,34 @@ export function createJungle(textures: Maps & { floor: Maps }) {
     map: textures.floor.map, normalMap: textures.floor.normal, roughnessMap: textures.floor.rough, color: '#cfc8b8',
   });
   group.add(summit(stone, top));
-  group.add(canopy());
+  group.add(canopy(segments));
   const mists = [mist(CANOPY_Y + 2, 0.36, 0), mist(CANOPY_Y + 4.5, 0.2, 7.3)];
   group.add(...mists);
-  // Temples on the horizon: the great one straight ahead, others scattered, each half-drowned in trees.
-  const spots: [number, number, number, number, number, number][] = [
-    [-30, -170, 14, 7, 4.6, 0.2], [95, -230, 10, 6, 4.0, 2.1], [-150, -120, 9, 6, 3.6, 4.4],
-    [170, -60, 8, 5, 3.4, 1.3], [-210, -260, 12, 6, 4.0, 5.2], [60, -360, 13, 7, 4.2, 3.3],
-    [48, -75, 6, 4, 3.0, 0.7], [-70, -45, 5, 4, 2.8, 1.9], // nearer, mostly swallowed by the trees
+  // Temples on the horizon, modelled in Blender (blender/pieces/maya_*.py) and
+  // loaded after the first frame: the great one straight ahead, others
+  // scattered, each half-drowned in trees. [x, z, width, model, turn]
+  const spots: [number, number, number, 'temple0' | 'temple1' | 'acropolis', number][] = [
+    [-30, -170, 30, 'temple0', 0.2], [95, -230, 30, 'acropolis', 2.1], [-150, -120, 19, 'temple1', 4.4],
+    [170, -60, 16, 'temple0', 1.3], [-210, -260, 36, 'acropolis', 5.2], [60, -360, 27, 'temple1', 3.3],
+    [48, -75, 12, 'temple1', 0.7], [-70, -45, 10, 'temple0', 1.9], // nearer, mostly swallowed by the trees
   ];
-  for (const [x, z, base, tiers, h, rot] of spots) {
-    const t = temple(stone, base, tiers, h, x * 0.1);
-    t.position.set(x, 0, z);
-    t.rotation.y = Math.atan2(-x, -z) + rot * 0.1; // stairs (+z) turned roughly toward us
-    group.add(t);
-  }
+  const temples = new THREE.Group();
+  group.add(temples);
   return {
     group,
     stone,
     mists,
+    /** Set the temples in the forest once their models have arrived. */
+    setTemples(models: Record<'temple0' | 'temple1' | 'acropolis', THREE.Object3D>) {
+      for (const [x, z, width, kind, turn] of spots) {
+        const t = models[kind].clone();
+        t.position.set(x, CANOPY_Y - 6, z); // the base drowned below the canopy
+        t.scale.setScalar(width);
+        t.rotation.y = Math.atan2(-x, -z) + turn * 0.1; // fronts (+z) turned roughly toward us
+        t.traverse(o => { o.castShadow = o.receiveShadow = false; });
+        temples.add(t);
+      }
+    },
     update(t: number, mistColor: THREE.Color) {
       for (const m of mists) {
         const u = (m.material as THREE.ShaderMaterial).uniforms;

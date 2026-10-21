@@ -124,7 +124,7 @@ const PLACES = {
   },
 } as const;
 
-export function createAtmosphere(scene: THREE.Scene, renderer: THREE.WebGLRenderer, monumentZ: number) {
+export function createAtmosphere(scene: THREE.Scene, renderer: THREE.WebGLRenderer, monumentZ: number, shadowSize = 4096) {
   const sky = dome();
   scene.add(sky);
   const fog = new THREE.Fog(NIGHT_HORIZON.clone(), 16, 72);
@@ -138,7 +138,7 @@ export function createAtmosphere(scene: THREE.Scene, renderer: THREE.WebGLRender
   const key = new THREE.SpotLight('#fff0dc', 420, 0, 0.56, 0.6, 2);
   key.position.set(-3.2, 13, 5.5);
   key.castShadow = true;
-  key.shadow.mapSize.set(4096, 4096);
+  key.shadow.mapSize.set(shadowSize, shadowSize);
   key.shadow.bias = -0.0002;
   key.shadow.normalBias = 0.02;
   key.shadow.radius = 3;
@@ -147,7 +147,7 @@ export function createAtmosphere(scene: THREE.Scene, renderer: THREE.WebGLRender
   const sun = new THREE.DirectionalLight('#ffdcb0', 0);
   sun.position.set(10, 5.6, 7); // ≈27° up: the golden hour, long shadows across the board
   sun.castShadow = true;
-  sun.shadow.mapSize.set(4096, 4096);
+  sun.shadow.mapSize.set(shadowSize, shadowSize);
   const sc = sun.shadow.camera;
   sc.left = sc.bottom = -11; // the whole summit deck in Calakmul
   sc.right = sc.top = 11;
