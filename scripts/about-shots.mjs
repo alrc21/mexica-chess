@@ -31,7 +31,7 @@ await page.evaluate(() => window.__stage.frame([0, 8.4, 11.2], [0, 0, 1.25], 30)
 const move = (a, b) => page.evaluate((a, b) => { window.__game.square(a); window.__game.square(b); }, a, b);
 for (const [a, b] of [['e2', 'e4'], ['e7', 'e5'], ['g1', 'f3'], ['b8', 'c6'], ['f1', 'b5'], ['a7', 'a6']]) { await move(a, b); await sleep(2900); }
 await move('b5', 'c6'); // the Cuauhtli takes the Ocelotl: the cinematic cut
-for (const [ms, name] of [[1150, 'blow-1'], [250, 'blow-2'], [300, 'blow-3']]) { await sleep(ms); await shot(name); }
+for (const [ms, name] of [[1150, 'blow-1'], [250, 'blow-2'], [300, 'blow-3']]) { await sleep(ms); await shot(name); } // keep the best as blow.jpg
 await sleep(6000);
 // A square struck twice, then left empty: d5 cracks, shatters, and the queen moves on.
 await page.evaluate(() => window.__game.start({ side: 'w', mode: 'friend', level: 'easy' }));

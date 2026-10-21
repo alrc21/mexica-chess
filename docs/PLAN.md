@@ -96,9 +96,17 @@ Each phase ends with before/after screenshots in `docs/evidence/`.
   (`scripts/learn.mjs`).
 - [x] **6c. About and ship.** `/about` (a static second page), public repo,
   Vercel.
-- [ ] **7. Next.** KTX2 textures (`scripts/ktx2.mjs` is ready), the Maya
-  temples modelled in Blender instead of blocks, a real-iPhone pass, contact
-  shadows (ambient occlusion) between piece and board.
+- [x] **7a. Grounded, lighter, Maya.** Contact shadows under every stone
+  (`scripts/contact.mjs`). Phones: 1.5x pixels at most, 2K shadow maps, a
+  coarser forest, 1K ground textures — ~40% cheaper per frame at a phone's
+  viewport on the same GPU (`PHONE=1 node scripts/fps.mjs '…/?phone=1'`).
+  Calakmul's temples carved in Blender (`blender/maya.py`,
+  `blender/pieces/maya_*.py`, a Maya limestone in `kit.py`), loaded after the
+  first frame. Licences: code MIT, art CC BY-NC 4.0. Commits under the
+  GitHub noreply address (history rewritten).
+- [ ] **8. Next.** A real-iPhone pass; a phone download under 10 MB before
+  play (phone-sized piece textures, the precinct after the first frame);
+  KTX2 for VRAM (`scripts/ktx2.mjs` is ready); 2K stone on desktop.
 
 ## Budgets
 
