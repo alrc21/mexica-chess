@@ -36,7 +36,7 @@ export default function Segmented({ label, options, index, onSelect, tone = 'dar
   }, [index, options.length]);
 
   return (
-    <div className="pointer-events-auto flex items-center gap-3 max-w-full">
+    <div className="flex items-center gap-3 max-w-full">
       <span
         className="shrink-0 font-mono text-[11px] uppercase tracking-[0.12em] select-none"
         style={{ color: ink, opacity: 0.45, minWidth: labelWidth }}

@@ -2,7 +2,10 @@ import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import type { PieceSymbol } from 'chess.js';
 import { createEngine, type Level } from './engine';
 import { createGame, type Game, type Settings, type View } from './game';
+import Learn, { Beans } from './Learn';
+import { CHAPTERS, LESSONS, type Lesson } from './lessons';
 import { LORE } from './lore';
+import { loadProgress, recordSolve } from './progress';
 import Segmented from './Segmented';
 import { createStage, type Stage } from './stage';
 import type { Place } from './atmosphere';
@@ -44,6 +47,8 @@ export default function App() {
   const [hint, setHint] = useState(false);
   const [place, setPlace] = useState<Place>('tenochtitlan');
   const [veiled, setVeiled] = useState(false); // a short curtain while the place changes
+  const [learning, setLearning] = useState(false); // the lessons sheet is open
+  const [progress, setProgress] = useState(loadProgress);
 
   useEffect(() => {
     const engine = createEngine();
@@ -62,11 +67,22 @@ export default function App() {
   }, []);
 
   useEffect(() => { document.documentElement.dataset.theme = day ? 'day' : 'night'; }, [day]);
+  // A solved lesson is written into this browser's progress (the best cacao is kept).
+  const solvedId = view?.lesson?.solved != null ? view.lesson.id : null;
+  const solvedCacao = view?.lesson?.solved ?? null;
+  useEffect(() => {
+    if (solvedId && solvedCacao !== null) setProgress(p => recordSolve(p, solvedId, solvedCacao));
+  }, [solvedId, solvedCacao]);
 
   const g = game.current;
   const intro = view?.phase === 'intro';
   const playing = view?.phase === 'playing' || view?.phase === 'over';
   const over = view?.phase === 'over';
+  const inLesson = view?.phase === 'lesson';
+  const lesson = inLesson ? LESSONS.find(l => l.id === view?.lesson?.id) ?? null : null;
+  const lessonIndex = lesson ? LESSONS.indexOf(lesson) : -1;
+  const following = lessonIndex >= 0 ? LESSONS[lessonIndex + 1] ?? null : null;
+  const ls = view?.lesson;
   const tone = day ? 'light' : 'dark';
   const veil = day ? '236,230,218' : '11,10,8';
 
@@ -93,7 +109,8 @@ export default function App() {
     setVeiled(true);
     setTimeout(() => { stage.current?.setPlace(p); setTimeout(() => setVeiled(false), 120); }, 650);
   };
-  const leave = () => { setWalking(false); setHint(false); g?.toIntro(); };
+  const leave = () => { setWalking(false); setHint(false); setLearning(false); g?.toIntro(); };
+  const study = (l: Lesson) => { setLearning(false); setWalking(false); setHint(false); g?.lesson(l); };
   const again = () => { setWalking(false); setHint(false); g?.start(view!.settings); };
   const mute = () => {
     stage.current?.audio.setMuted(!muted);
@@ -124,7 +141,7 @@ export default function App() {
 
       <div className="pointer-events-none fixed inset-0 z-40 text-ink">
         <header className="absolute inset-x-0 top-0 flex items-start justify-between gap-6 px-5 pt-[max(1.25rem,env(safe-area-inset-top))] md:px-8">
-          <button type="button" onClick={leave} style={fade(!!playing)}
+          <button type="button" onClick={leave} style={fade(!!playing || inLesson)}
             className="font-display text-[17px] tracking-[-0.01em] transition-opacity duration-300 hover:opacity-60">
             Mexica Chess
           </button>
@@ -135,6 +152,12 @@ export default function App() {
             <button type="button" onClick={() => g?.undo()} disabled={!view?.canUndo}
               className="transition-opacity duration-300 hover:opacity-60 disabled:opacity-30">Undo</button>
             <button type="button" onClick={leave} className="transition-opacity duration-300 hover:opacity-60">New game</button>
+          </nav>
+          <nav className="absolute right-5 top-[max(1.25rem,env(safe-area-inset-top))] flex gap-5 text-[14px] md:right-8 md:gap-7" style={fade(inLesson && !learning)}>
+            <button type="button" onClick={() => g?.hint()} disabled={ls?.solved != null || !!ls?.failed}
+              className="transition-opacity duration-300 hover:opacity-60 disabled:opacity-30">Hint</button>
+            <button type="button" onClick={() => lesson && study(lesson)} className="transition-opacity duration-300 hover:opacity-60">Retry</button>
+            <button type="button" onClick={() => setLearning(true)} className="transition-opacity duration-300 hover:opacity-60">Lessons</button>
           </nav>
         </header>
 
@@ -165,10 +188,55 @@ export default function App() {
             <Segmented label="Hour" labelWidth="5.5rem" tone={tone} options={['Night', 'Day']}
               index={day ? 1 : 0} onSelect={i => changeHour(i === 1)} />
           </div>
-          <button type="button" onClick={() => g?.start(settings)}
-            className="pointer-events-auto mt-8 rounded-full bg-ink px-7 py-3 text-[15px] text-paper transition-[opacity,transform] duration-300 hover:opacity-85 active:scale-[0.98]">
-            Play
-          </button>
+          <div className="mt-8 flex items-center gap-3">
+            <button type="button" onClick={() => g?.start(settings)}
+              className="rounded-full bg-ink px-7 py-3 text-[15px] text-paper transition-[opacity,transform] duration-300 hover:opacity-85 active:scale-[0.98]">
+              Play
+            </button>
+            <button type="button" onClick={() => setLearning(true)}
+              className="rounded-full border border-line px-6 py-3 text-[15px] transition-[background-color,transform] duration-300 hover:bg-line active:scale-[0.98]">
+              {Object.keys(progress.cacao).length ? 'Keep learning' : 'Learn to play'}
+            </button>
+          </div>
+          <a href="/about" className="mt-5 inline-block text-[14px] text-soft transition-opacity duration-300 hover:opacity-60">About this experiment</a>
+        </section>
+
+        {/* ── Lesson ────────────────────────────────────────────────────── */}
+        <section data-hud="lesson" className="absolute bottom-0 left-0 w-full max-w-[560px] px-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] md:px-8 md:pb-9"
+          style={{ ...fade(inLesson && !learning, 800), pointerEvents: 'none' }}>
+          {/* The text lets clicks through to the board; only its buttons take them. */}
+          {lesson && (
+            <>
+              <p className="font-mono text-[11px] uppercase tracking-[0.12em] text-soft">
+                {String(lessonIndex + 1).padStart(2, '0')} · {CHAPTERS.find(c => c.id === lesson.chapter)?.title}
+                {lesson.kind === 'clear' && ` · moves ${ls?.moves ?? 0} · best ${lesson.par}`}
+                {lesson.kind === 'hunt' && ` · move ${ls?.moves ?? 0} of ${lesson.within}`}
+              </p>
+              <h2 className="mt-2 flex items-center gap-3 font-display text-[30px] font-light leading-none tracking-[-0.02em] md:text-[44px]">
+                {lesson.title}
+                {view?.thinking && <span aria-hidden className="mc-breathe inline-block h-2 w-2 rounded-full bg-ink" />}
+              </h2>
+              <p className="mt-3 max-w-[46ch] text-[15px] leading-[1.5] text-soft">{lesson.brief}</p>
+              <p aria-live="polite" className="mt-3 min-h-[1.5em] max-w-[46ch] text-[15px] leading-[1.5]"
+                style={{ color: ls?.feedback?.tone === 'bad' ? (day ? '#a8361c' : '#f0906e') : undefined }}>
+                {ls?.feedback?.text}
+              </p>
+              {ls?.solved != null && (
+                <div className="mt-4 flex flex-wrap items-center gap-5" style={{ pointerEvents: learning ? 'none' : 'auto' }}>
+                  <Beans n={ls.solved} size={12} />
+                  {following
+                    ? <button type="button" onClick={() => study(following)}
+                        className="rounded-full bg-ink px-6 py-2.5 text-[15px] text-paper transition-opacity duration-300 hover:opacity-85">Next: {following.title}</button>
+                    : <button type="button" onClick={() => setLearning(true)}
+                        className="rounded-full bg-ink px-6 py-2.5 text-[15px] text-paper transition-opacity duration-300 hover:opacity-85">All lessons</button>}
+                </div>
+              )}
+              {ls?.failed && (
+                <button type="button" onClick={() => study(lesson)} style={{ pointerEvents: learning ? 'none' : 'auto' }}
+                  className="mt-4 rounded-full bg-ink px-6 py-2.5 text-[15px] text-paper transition-opacity duration-300 hover:opacity-85">Try again</button>
+              )}
+            </>
+          )}
         </section>
 
         {/* ── Game ──────────────────────────────────────────────────────── */}
@@ -186,13 +254,13 @@ export default function App() {
         </footer>
 
         {/* The view: on foot or above, the hour, the sound. */}
-        <div className="absolute right-5 flex flex-col items-end gap-2.5 font-mono text-[11px] uppercase tracking-[0.12em] md:right-8"
-          style={{ bottom: playing ? 'max(4.5rem, calc(env(safe-area-inset-bottom) + 3.25rem))' : 'max(1.5rem, env(safe-area-inset-bottom))', ...fade(!!view && !over) }}>
-          {playing && (
+        <div className={`absolute right-5 flex flex-col items-end gap-2.5 font-mono text-[11px] uppercase tracking-[0.12em] md:right-8 ${inLesson ? 'max-md:hidden' : ''}`}
+          style={{ bottom: playing ? 'max(4.5rem, calc(env(safe-area-inset-bottom) + 3.25rem))' : 'max(1.5rem, env(safe-area-inset-bottom))', ...fade(!!view && !over && !learning) }}>
+          {(playing || inLesson) && (
             <button type="button" onClick={() => changeWalk(!walking)} disabled={moving}
               className="transition-opacity duration-300 hover:opacity-60 disabled:opacity-40">{walking ? 'Rise above' : 'Walk the board'}</button>
           )}
-          {playing && (
+          {(playing || inLesson) && (
             <button type="button" onClick={() => changeHour(!day)} disabled={moving}
               className="transition-opacity duration-300 hover:opacity-60 disabled:opacity-40">{day ? 'Nightfall' : 'Daybreak'}</button>
           )}
@@ -231,6 +299,8 @@ export default function App() {
           </div>
         </div>
       </div>
+
+      <Learn open={learning} progress={progress} current={lesson?.id ?? null} onPick={study} onClose={() => setLearning(false)} />
     </>
   );
 }

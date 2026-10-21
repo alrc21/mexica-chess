@@ -1,6 +1,7 @@
 import { Chess, type Color, type Move, type PieceSymbol, type Square } from 'chess.js';
 import { wait } from './anim';
 import type { Engine, Level } from './engine';
+import { cacaoFor, type Goal, type Lesson } from './lessons';
 import { LORE, SIDE } from './lore';
 import type { Hit } from './board';
 import type { Stage } from './stage';
@@ -8,7 +9,7 @@ import type { Stage } from './stage';
 export type Settings = { side: Color; mode: 'machine' | 'friend'; level: Level };
 
 export type View = {
-  phase: 'intro' | 'playing' | 'over';
+  phase: 'intro' | 'playing' | 'over' | 'lesson';
   settings: Settings;
   turn: Color;
   thinking: boolean;
@@ -19,7 +20,25 @@ export type View = {
   promoting: boolean;
   hover: { name: string; role: string; side: string } | null;
   canUndo: boolean;
+  lesson: {
+    id: string;
+    feedback: { tone: 'good' | 'bad'; text: string } | null;
+    /** Cacao earned, once solved. */
+    solved: number | null;
+    failed: boolean;
+    moves: number;
+  } | null;
 };
+
+const GOALS: Record<Goal, (m: Move, after: Chess) => boolean> = {
+  check: (_, c) => c.inCheck(),
+  castle: m => m.flags.includes('k') || m.flags.includes('q'),
+  promote: m => !!m.promotion,
+  enpassant: m => m.flags.includes('e'),
+  mate: (_, c) => c.isCheckmate(),
+};
+/** Basalt never moves in a drill: after each move the turn comes straight back. */
+const backToWhite = (fen: string) => { const f = fen.split(' '); f[1] = 'w'; f[3] = '-'; return f.join(' '); };
 
 /**
  * One game: chess.js keeps the rules, the stage shows them, the engine plays
@@ -37,11 +56,17 @@ export function createGame(stage: Stage, engine: Engine, emit: (v: View) => void
   let hover: View['hover'] = null;
   let queued: Square | null = null; // a target clicked mid-animation, played when it lands
   let generation = 0; // bumps on undo/new game so a late engine reply is ignored
+  // A lesson in progress: always played as Tezontle; Basalt answers from the script or the engine.
+  let lesson: Lesson | null = null;
+  let ls = { step: 0, moves: 0, mistakes: 0, hinted: false, ply: 0, solved: null as number | null, failed: false };
+  let feedback: NonNullable<View['lesson']>['feedback'] = null;
 
-  const machineTurn = () => settings.mode === 'machine' && chess.turn() !== settings.side;
+  const machineTurn = () => !lesson && settings.mode === 'machine' && chess.turn() !== settings.side;
   // Whose pieces the player may pick up: their own army, even while the machine thinks.
-  const mine = () => (settings.mode === 'machine' ? settings.side : chess.turn());
-  const canMove = () => phase === 'playing' && !busy && !thinking && !promoting && !machineTurn();
+  const mine = () => (lesson ? 'w' : settings.mode === 'machine' ? settings.side : chess.turn());
+  const live = () => phase === 'playing' || phase === 'lesson';
+  const lessonOpen = () => !lesson || (ls.solved === null && !ls.failed && chess.turn() === 'w');
+  const canMove = () => live() && !busy && !thinking && !promoting && !machineTurn() && lessonOpen();
 
   function result(): View['result'] {
     if (chess.isCheckmate()) {
@@ -83,7 +108,8 @@ export function createGame(stage: Stage, engine: Engine, emit: (v: View) => void
     result: phase === 'over' ? result() : null,
     promoting: !!promoting,
     hover,
-    canUndo: phase !== 'intro' && !busy && chess.history().length > (settings.mode === 'machine' && settings.side === 'b' ? 1 : 0),
+    canUndo: phase !== 'intro' && !lesson && !busy && chess.history().length > (settings.mode === 'machine' && settings.side === 'b' ? 1 : 0),
+    lesson: lesson && { id: lesson.id, feedback, solved: ls.solved, failed: ls.failed, moves: ls.moves },
   });
 
   function kingSquare(c: Color): Square | null {
@@ -124,7 +150,7 @@ export function createGame(stage: Stage, engine: Engine, emit: (v: View) => void
     else targets = chess.moves({ square: selected, verbose: true });
   }
 
-  async function apply(m: { from: string; to: string; promotion?: string }, byMachine = false) {
+  async function apply(m: string | { from: string; to: string; promotion?: string }, byMachine = false) {
     let move: Move;
     try { move = chess.move(m); } catch {
       console.error('illegal move', m, chess.fen());
@@ -133,7 +159,15 @@ export function createGame(stage: Stage, engine: Engine, emit: (v: View) => void
     busy = true;
     if (!byMachine) { selected = null; targets = []; } else targets = [];
     stage.board.highlight({ selected });
+    if (lesson) feedback = null;
     publish();
+    if (lesson) {
+      await stage.play(move, ++ls.ply);
+      busy = false;
+      await after(move, byMachine);
+      if (queued && canMove()) { const q = queued; queued = null; game.square(q); }
+      return;
+    }
     // Two players at one screen: the board turns to whoever moves next.
     const facing = settings.mode === 'friend' && !chess.isGameOver() ? chess.turn() : undefined;
     await stage.play(move, chess.history().length, facing);
@@ -153,12 +187,89 @@ export function createGame(stage: Stage, engine: Engine, emit: (v: View) => void
     else if (queued) { const q = queued; queued = null; game.square(q); }
   }
 
+  // ── Lessons ────────────────────────────────────────────────────────────
+  const sim = () => new Chess(chess.fen(), { skipValidation: lesson?.kind === 'clear' });
+  /** Before a move lands: is it the lesson's answer? A wrong move never touches the board. */
+  function judge(m: { from: string; to: string; promotion?: string }): string | null {
+    const l = lesson!;
+    if (l.kind === 'clear' || l.kind === 'hunt') return null;
+    const t = sim();
+    const mv = t.move(m);
+    const right = l.kind === 'goal' ? GOALS[l.goal!](mv, t) : l.line![ls.step].play.includes(mv.san);
+    if (right) return null;
+    if (t.isStalemate()) return 'Stalemate: he has no move and isn’t in check. That’s a draw — try again.';
+    return l.wrong ?? 'Not that one. Look again.';
+  }
+  function attempt(m: { from: string; to: string; promotion?: string }) {
+    const why = lesson && judge(m);
+    if (!why) { apply(m); return; }
+    ls.mistakes++;
+    feedback = { tone: 'bad', text: why };
+    stage.audio.play('thud', { gain: 0.35, rate: 0.7 });
+    deselect();
+    marks();
+    publish();
+  }
+  function solve() {
+    const l = lesson!;
+    ls.solved = cacaoFor(ls.mistakes, ls.hinted, l.kind === 'clear' ? ls.moves - (l.par ?? ls.moves) : 0);
+    feedback = { tone: 'good', text: l.learned };
+    deselect();
+    stage.board.highlight({});
+    stage.audio.play('drum', { gain: 0.75, variant: 2 });
+    publish();
+  }
+  function fail(text: string) {
+    ls.failed = true;
+    feedback = { tone: 'bad', text };
+    deselect();
+    marks();
+    publish();
+  }
+  async function after(move: Move, byMachine: boolean) {
+    const l = lesson!;
+    const g = generation;
+    if (byMachine) {
+      if (l.kind === 'hunt' && chess.isGameOver()) { fail('A draw. The hunt starts again.'); return; }
+      reselect();
+      marks();
+      publish();
+      return;
+    }
+    ls.moves++;
+    if (l.kind === 'clear') {
+      if (!chess.board().flat().some(p => p?.color === 'b')) { solve(); return; }
+      chess.load(backToWhite(chess.fen()), { skipValidation: true });
+      reselect(); // picked up while it was still moving: now its moves can show
+      marks();
+      publish();
+      return;
+    }
+    if (l.kind === 'goal') { solve(); return; }
+    if (l.kind === 'line') {
+      const step = l.line![ls.step++];
+      if (!step.reply) { if (ls.step >= l.line!.length) solve(); return; }
+      marks();
+      publish();
+      await wait(450);
+      if (g === generation) await apply(step.reply, true);
+      return;
+    }
+    // hunt
+    if (chess.isCheckmate()) { solve(); return; }
+    if (chess.isGameOver()) { fail(chess.isStalemate() ? 'Stalemate: he has no move and isn’t in check. A draw — try again.' : 'A draw. Try again.'); return; }
+    if (ls.moves >= l.within!) { fail(`He held out for ${l.within} moves. Try again — close the net tighter.`); return; }
+    marks();
+    publish();
+    machine();
+  }
+
   async function machine() {
     thinking = true;
     publish();
     const g = generation;
-    const [uci] = await Promise.all([engine.best(chess.fen(), settings.level), wait(500)]);
-    if (g !== generation || phase !== 'playing') return;
+    const [uci] = await Promise.all([engine.best(chess.fen(), lesson ? 'hard' : settings.level), wait(500)]);
+    if (g !== generation || !live()) return;
     thinking = false;
     await apply({ from: uci.slice(0, 2), to: uci.slice(2, 4), promotion: uci[4] }, true);
   }
@@ -166,6 +277,7 @@ export function createGame(stage: Stage, engine: Engine, emit: (v: View) => void
   const game = {
     async start(s: Settings) {
       settings = s;
+      lesson = null;
       generation++;
       engine.stop();
       engine.newGame();
@@ -194,7 +306,7 @@ export function createGame(stage: Stage, engine: Engine, emit: (v: View) => void
     },
 
     square(sq: Square): boolean {
-      if (phase !== 'playing' || promoting) return false;
+      if (!live() || promoting) return false;
       const options = targets.filter(m => m.to === sq);
       if (selected && options.length && busy) { queued = sq; return true; } // clicked while stone was still moving
       if (selected && options.length && canMove()) {
@@ -203,7 +315,7 @@ export function createGame(stage: Stage, engine: Engine, emit: (v: View) => void
           publish();
           return true;
         }
-        apply({ from: selected, to: sq });
+        attempt({ from: selected, to: sq });
         return true;
       }
       const piece = chess.get(sq);
@@ -222,7 +334,8 @@ export function createGame(stage: Stage, engine: Engine, emit: (v: View) => void
       if (!promoting) return;
       const m = { ...promoting, promotion: type };
       promoting = null;
-      apply(m);
+      attempt(m);
+      publish();
     },
 
     cancelPromotion() {
@@ -237,7 +350,7 @@ export function createGame(stage: Stage, engine: Engine, emit: (v: View) => void
       const p = sq ? chess.get(sq) : undefined;
       const target = isTarget(sq);
       stage.board.hoverTile(target ? sq : null);
-      stage.setCursor(phase === 'playing' && (target || p?.color === mine()));
+      stage.setCursor(live() && (target || p?.color === mine()));
       const next = p ? { ...LORE[p.type], side: SIDE[p.color] } : null;
       if (next?.name === hover?.name && next?.side === hover?.side) return;
       hover = next;
@@ -245,7 +358,7 @@ export function createGame(stage: Stage, engine: Engine, emit: (v: View) => void
     },
 
     undo() {
-      if (busy || phase === 'intro') return;
+      if (busy || phase === 'intro' || lesson) return;
       generation++;
       engine.stop();
       thinking = false;
@@ -263,6 +376,7 @@ export function createGame(stage: Stage, engine: Engine, emit: (v: View) => void
     },
 
     async toIntro() {
+      lesson = null;
       generation++;
       engine.stop();
       thinking = false;
@@ -274,6 +388,54 @@ export function createGame(stage: Stage, engine: Engine, emit: (v: View) => void
       busy = true;
       await stage.toIntro();
       busy = false;
+    },
+
+    /** Set out a lesson's position and fly to it (or stay, if already over the board). */
+    async lesson(l: Lesson) {
+      const fly = phase !== 'lesson' && phase !== 'playing';
+      generation++;
+      engine.stop();
+      engine.newGame();
+      lesson = l;
+      ls = { step: 0, moves: 0, mistakes: 0, hinted: false, ply: 0, solved: null, failed: false };
+      feedback = null;
+      chess.load(l.fen, { skipValidation: l.kind === 'clear' });
+      deselect();
+      promoting = null;
+      thinking = false;
+      phase = 'lesson';
+      busy = true;
+      stage.board.setBoard(chess.board(), 0);
+      stage.board.highlight({});
+      publish();
+      if (fly) await stage.toGame('w');
+      else await stage.face('w');
+      busy = false;
+      marks();
+      publish();
+    },
+
+    /** Pick up the stone that should move (costs a cacao). */
+    async hint() {
+      const l = lesson;
+      if (!l || !canMove()) return;
+      let from: Square | undefined;
+      if (l.kind === 'line') from = sim().move(l.line![ls.step].play[0]).from;
+      else if (l.kind === 'goal') from = sim().moves({ verbose: true }).find(m => { const t = sim(); return GOALS[l.goal!](t.move(m), t); })?.from;
+      else if (l.kind === 'clear') from = sim().moves({ verbose: true }).find(m => m.captured)?.from ?? sim().moves({ verbose: true })[0]?.from;
+      else {
+        const g = generation;
+        thinking = true;
+        publish();
+        const uci = await engine.best(chess.fen(), 'hard');
+        thinking = false;
+        if (g !== generation) return;
+        from = uci.slice(0, 2) as Square;
+      }
+      if (!from) return;
+      ls.hinted = true;
+      if (selected !== from) game.square(from);
+      publish();
     },
 
     view: () => publish(),

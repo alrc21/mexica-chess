@@ -298,6 +298,7 @@ export function createBoard(scene: THREE.Scene, models: Models, sfx: Sfx, hooks:
     const mover = pieces.get(m.from as Square)!;
     if (lifted === mover) lifted = null;
     pieces.delete(m.from as Square);
+    mover.userData.square = m.to; // a click on the stone in flight picks it up where it's going
     const victimSq = (m.flags.includes('e') ? m.to[0] + m.from[1] : m.captured ? m.to : null) as Square | null;
     const victim = victimSq ? pieces.get(victimSq) ?? null : null;
     if (victimSq) pieces.delete(victimSq);
