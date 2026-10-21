@@ -1,0 +1,7 @@
+node_modules
+dist
+blender/out
+blender/assets
+docs/evidence
+.env*
+.impeccable

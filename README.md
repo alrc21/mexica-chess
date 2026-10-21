@@ -1,10 +1,12 @@
 # Mexica Chess
 
+**Play: [mexica-chess.vercel.app](https://mexica-chess.vercel.app)** · [About](https://mexica-chess.vercel.app/about)
+
 A chess set carved in volcanic stone, played in 3D in the browser: red tezontle against black basalt, on the plaza of Tenochtitlan or on a temple above the forest of Calakmul. An experiment by [Alia Studio](https://alia.studio) — make a game, model it in Blender, build it in 3D, make it fun, with design that feels Mexican in its material.
 
 ![The Templo Mayor at night](public/stills/templo-mayor.jpg)
 
-What's in it: every piece carved by a Python script in Blender and baked onto a light model; captures that break the piece into pre-fractured chunks and crack the slab beneath it; a cinematic camera, slow motion and real CC0 foley; Stockfish 19 in the browser; two players on one screen with the board turning; night and golden hour; walking the board on foot; and 26 lessons to learn the game, each checked with the engine. The story is on [/about](about.html).
+What's in it: every piece carved by a Python script in Blender and baked onto a light model; captures that break the piece into pre-fractured chunks and crack the slab beneath it; a cinematic camera, slow motion and real CC0 foley; Stockfish 19 in the browser; two players on one screen with the board turning; night and golden hour; walking the board on foot; and 26 lessons to learn the game, each checked with the engine. The story is on the [About page](https://mexica-chess.vercel.app/about).
 
 ## Run it
 
