@@ -38,6 +38,41 @@ export type BoardHooks = {
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
 
 /**
+ * Contact shadow: where a stone sits on the slab, the light can't get in. A
+ * soft dark square a little wider than the plinth, laid on the slab under each
+ * piece — it pales and spreads as the stone lifts, so a piece in the air
+ * reads as in the air. The key light's shadow map carries the long shadows;
+ * this carries the contact, which a shadow map is too coarse to draw.
+ */
+const CONTACT = (() => {
+  const n = 128;
+  const c = document.createElement('canvas');
+  c.width = c.height = n;
+  const x = c.getContext('2d')!;
+  const img = x.createImageData(n, n);
+  for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
+    // Rounded square: the plinth's footprint (±0.38 of the 1.2 decal → ±0.63 here), fading out beyond it.
+    const u = Math.abs((i + 0.5) / n * 2 - 1), v = Math.abs((j + 0.5) / n * 2 - 1);
+    const qx = Math.max(u - 0.52, 0), qy = Math.max(v - 0.52, 0);
+    const d = Math.hypot(qx, qy) + Math.min(Math.max(u - 0.52, v - 0.52), 0);
+    const a = 1 - THREE.MathUtils.smoothstep(d, -0.06, 0.46);
+    const k = (j * n + i) * 4;
+    img.data[k] = img.data[k + 1] = img.data[k + 2] = Math.round(255 * a * a); // alphaMap reads green
+    img.data[k + 3] = 255;
+  }
+  x.putImageData(img, 0, 0);
+  const t = new THREE.CanvasTexture(c);
+  return t;
+})();
+const CONTACT_GEO = new THREE.PlaneGeometry(1.2, 1.2).rotateX(-Math.PI / 2);
+const CONTACT_DARK = 0.55;
+const contactMaterial = () => new THREE.MeshBasicMaterial({
+  color: '#000000', alphaMap: CONTACT, transparent: true, opacity: CONTACT_DARK,
+  depthWrite: false, toneMapped: false, fog: false,
+  polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
+});
+
+/**
  * Marks are whole squares of light laid on the stone, not panels on top of
  * it: an even warm wash (added light, so the grain and cracks show through),
  * a hairline inset from the edge, drawn as corner brackets for a target and
@@ -98,6 +133,31 @@ export function createBoard(scene: THREE.Scene, models: Models, sfx: Sfx, hooks:
   const rubble = createRubble(scene, sfx);
   let lifted: THREE.Object3D | null = null;
 
+  // One contact shadow per standing stone; it follows the stone until the stone is gone.
+  const contacts = new Map<THREE.Object3D, THREE.Mesh>();
+  const contactGroup = new THREE.Group();
+  scene.add(contactGroup);
+  function contact(o: THREE.Object3D) {
+    const m = new THREE.Mesh(CONTACT_GEO, contactMaterial());
+    m.renderOrder = 1;
+    contactGroup.add(m);
+    contacts.set(o, m);
+  }
+  function followContacts() {
+    for (const [o, m] of contacts) {
+      if (!o.parent) { // broken: its shadow goes with it
+        contactGroup.remove(m);
+        (m.material as THREE.Material).dispose();
+        contacts.delete(o);
+        continue;
+      }
+      const h = Math.max(0, o.position.y - SLAB_TOP);
+      m.position.set(o.position.x, SLAB_TOP + 0.004, o.position.z);
+      m.scale.setScalar(o.scale.x * (1 + h * 1.8));
+      (m.material as THREE.MeshBasicMaterial).opacity = CONTACT_DARK * THREE.MathUtils.clamp(1 - h * 2.4, 0.18, 1);
+    }
+  }
+
   const heights = new Map<THREE.Object3D, number>();
   function spawn(color: Color, type: PieceSymbol, sq: Square) {
     const src = models[color][type];
@@ -108,6 +168,7 @@ export function createBoard(scene: THREE.Scene, models: Models, sfx: Sfx, hooks:
     o.userData = { square: sq, color, type, h: heights.get(src) };
     group.add(o);
     pieces.set(sq, o);
+    contact(o);
     return o;
   }
 
@@ -121,6 +182,7 @@ export function createBoard(scene: THREE.Scene, models: Models, sfx: Sfx, hooks:
     group.clear();
     pieces.clear();
     lifted = null;
+    followContacts(); // the cleared stones take their shadows
     for (const p of board.flat()) if (p) spawn(p.color, p.type, p.square);
   }
 
@@ -409,13 +471,14 @@ export function createBoard(scene: THREE.Scene, models: Models, sfx: Sfx, hooks:
     setParticleScale: rubble.setScale,
     /** One of everything this board will ever draw, for the shader warm-up. */
     warmup(): THREE.Object3D[] {
-      return [new THREE.Mesh(TILE, tileMaterial()), ...rubble.warmup()];
+      return [new THREE.Mesh(TILE, tileMaterial()), new THREE.Mesh(CONTACT_GEO, contactMaterial()), ...rubble.warmup()];
     },
     /** Advances the board's effects; true while anything is still moving. */
     update(dt: number) {
       clock += dt;
       for (const t of marks.children) ((t as THREE.Mesh).material as THREE.ShaderMaterial).uniforms.uTime.value = clock;
       for (let i = effects.length - 1; i >= 0; i--) if (!effects[i](dt)) effects.splice(i, 1);
+      followContacts();
       obstacles.length = 0;
       for (const o of pieces.values()) obstacles.push({ x: o.position.x, z: o.position.z, r: 0.3, h: o.position.y + o.userData.h });
       const rubbleBusy = rubble.update(dt, obstacles);
