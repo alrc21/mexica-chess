@@ -128,22 +128,25 @@ export function createBoard(scene: THREE.Scene, models: Models, sfx: Sfx, hooks:
   let hovered: THREE.Mesh | null = null;
   let clock = 0;
   let wave = 0; // a new highlight retires the previous wave
+  // Tiles are pooled: disposing their material would release its program and
+  // the next selection would compile it again — a hitch on every click.
+  const spare: THREE.Mesh[] = [];
   function highlight(m: Marks) {
-    for (const t of marks.children) ((t as THREE.Mesh).material as THREE.Material).dispose();
+    for (const t of marks.children) spare.push(t as THREE.Mesh);
     marks.clear();
     tiles.clear();
     hovered = null;
     const origin = m.selected ? squarePos(m.selected) : null;
     const put = (kind: TileKind, sq: Square, y: number) => {
       const spec = TILES[kind];
-      const material = tileMaterial();
-      const u = material.uniforms;
+      const mesh = spare.pop() ?? new THREE.Mesh(TILE, tileMaterial());
+      const u = (mesh.material as THREE.ShaderMaterial).uniforms;
+      u.uHover.value = 0;
       u.uColor.value.set(spec.color);
       u.uFill.value = spec.fill;
       u.uLine.value = spec.line;
       u.uFull.value = spec.full ? 1 : 0;
       u.uPulse.value = spec.pulse ?? 0;
-      const mesh = new THREE.Mesh(TILE, material);
       mesh.position.copy(squarePos(sq)).setY(y);
       mesh.renderOrder = 2;
       mesh.userData.delay = origin && (kind === 'move' || kind === 'capture') ? 0.045 * mesh.position.distanceTo(origin) : 0;

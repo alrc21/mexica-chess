@@ -63,8 +63,14 @@ export type Stage = {
   toGame(side: Color): Promise<void>;
   /** Back to the slow drift in front of the Templo Mayor. */
   toIntro(): Promise<void>;
-  /** Plays move number `ply`; a blow that matters gets a cut to a low, close camera. */
-  play(move: Move, ply: number): Promise<void>;
+  /**
+   * Plays move number `ply`; a blow that matters gets a cut to a low, close
+   * camera. With `facing`, the camera ends up behind that side (two players
+   * sharing a screen: the board turns to whoever moves next).
+   */
+  play(move: Move, ply: number, facing?: Color): Promise<void>;
+  /** Turn around the board to a side's view (from the overview only). */
+  face(side: Color): Promise<void>;
   /** Checkmate: the king comes down, watched up close. */
   collapse(sq: Square, ply: number): Promise<void>;
   /** Down among the pieces on foot, or back up to the overview. */
@@ -227,11 +233,8 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
   const slabs = new Map<Square, Slab>();
   let broken: (THREE.Object3D | null)[][] = []; // [variant][level-1], loaded after the first frame
   const interiorOf: Partial<Record<'cantera' | 'andesite', THREE.Material>> = {};
-  const scar = (sq: Square, ply: number) => {
-    const s = slabs.get(sq);
-    const src = s && broken[s.variant]?.[s.stack.length - 1]; // intact → cracked → shattered
-    if (!s || !src) return;
-    const top = s.stack[s.stack.length - 1].obj;
+  /** A broken slab in this square's stone: the slab's own bake outside, fresh stone in the cuts. */
+  const dress = (src: THREE.Object3D, s: Slab) => {
     const exterior = (s.stack[0].obj.getObjectByProperty('isMesh', true) as THREE.Mesh).material as THREE.Material;
     const obj = src.clone();
     obj.traverse(o => {
@@ -240,6 +243,14 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
       m.material = (m.material as THREE.Material).name === 'interior' ? interiorOf[s.stone]! : exterior;
       m.receiveShadow = true;
     });
+    return obj;
+  };
+  const scar = (sq: Square, ply: number) => {
+    const s = slabs.get(sq);
+    const src = s && broken[s.variant]?.[s.stack.length - 1]; // intact → cracked → shattered
+    if (!s || !src) return;
+    const top = s.stack[s.stack.length - 1].obj;
+    const obj = dress(src, s);
     obj.position.copy(top.position);
     obj.rotation.copy(top.rotation);
     scene.add(obj);
@@ -304,6 +315,34 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
       const e = easeInOut(k);
       q.copy(p0).multiplyScalar((1 - e) ** 2).addScaledVector(mid, 2 * (1 - e) * e).addScaledVector(to.pos, e * e);
       camera.position.copy(q);
+      look.lerpVectors(l0, to.look, e);
+      camera.lookAt(look);
+      camera.fov = f0 + (to.fov - f0) * e;
+      camera.updateProjectionMatrix();
+    });
+  }
+  /**
+   * Walk the camera round the board to `to`: azimuth, distance and height eased
+   * together with a slight rise, eyes on the board — a turn, not a flip over the top.
+   * A half turn always goes the same way round, like a turntable.
+   */
+  async function orbitTo(to: View, dur: number) {
+    const id = turn;
+    const l0 = currentLook();
+    mode = 'scripted';
+    controls.enabled = false;
+    const p0 = camera.position.clone();
+    const f0 = camera.fov;
+    const a0 = Math.atan2(p0.x, p0.z);
+    let da = Math.atan2(to.pos.x, to.pos.z) - a0;
+    da = THREE.MathUtils.euclideanModulo(da + Math.PI, Math.PI * 2) - Math.PI;
+    if (Math.abs(da) > Math.PI - 0.05) da = Math.PI;
+    const r0 = Math.hypot(p0.x, p0.z), r1 = Math.hypot(to.pos.x, to.pos.z);
+    await tween(dur, k => {
+      if (id !== turn) return;
+      const e = easeInOut(k);
+      const a = a0 + da * e, r = r0 + (r1 - r0) * e;
+      camera.position.set(Math.sin(a) * r, p0.y + (to.pos.y - p0.y) * e + Math.sin(Math.PI * e) * 1.1, Math.cos(a) * r);
       look.lerpVectors(l0, to.look, e);
       camera.lookAt(look);
       camera.fov = f0 + (to.fov - f0) * e;
@@ -385,8 +424,7 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
     }
     return { pos: best!, look: target.clone().add(new THREE.Vector3(0, 0.38, 0)), fov: narrow() ? 50 : 36 };
   }
-  async function cinematic(focus: THREE.Vector3, along: THREE.Vector3, action: () => Promise<void>, lead = 0.25, skip: THREE.Vector3[] = []) {
-    const back: View = { pos: camera.position.clone(), look: controls.target.clone(), fov: camera.fov };
+  async function cinematic(focus: THREE.Vector3, along: THREE.Vector3, action: () => Promise<void>, lead = 0.25, skip: THREE.Vector3[] = [], back: View = { pos: camera.position.clone(), look: controls.target.clone(), fov: camera.fov }) {
     const id = ++turn;
     const flight = fly(witness(focus, along, skip), 0.8, 0.35);
     await tween(lead, () => {});
@@ -420,16 +458,31 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
       setNear(0.1);
       mode = 'intro';
     },
-    play(move, ply) {
+    async play(move, ply, facing) {
       const b = board!;
       const big = !!move.captured && move.captured !== 'p';
-      if (mode !== 'orbit' || !big) return b.play(move, ply);
+      const turning = !!facing && facing !== side && mode === 'orbit';
+      if (mode !== 'orbit' || !big) {
+        await b.play(move, ply);
+        if (turning) await stage.face(facing!);
+        return;
+      }
       const to = squarePos(move.to as Square);
       const from = squarePos(move.from as Square);
       const along = to.clone().sub(from).setY(0).normalize();
       // The attacker's own path is not in the way: it's the subject.
       const path = [from, from.clone().lerp(to, 0.5), to];
-      return cinematic(from.clone().lerp(to, 0.7), along, () => b.play(move, ply), 0.25, path);
+      // Turning anyway: the cut comes back to the next player's side, not to where it left.
+      if (turning) side = facing!;
+      return cinematic(from.clone().lerp(to, 0.7), along, () => b.play(move, ply), 0.25, path, turning ? GAME(side) : undefined);
+    },
+    async face(s) {
+      if (s === side || mode !== 'orbit') return;
+      const id = ++turn;
+      side = s;
+      await orbitTo(GAME(s), 1.3);
+      if (id !== turn) return;
+      toOrbit(GAME(s));
     },
     collapse(sq, ply) {
       const b = board!;
@@ -571,9 +624,10 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
     // Compile every shader now, behind the curtain, not on the first click.
     const warm = board.warmup();
     scene.add(...warm);
-    renderer.compile(scene, camera);
+    inComposer(() => renderer.compile(scene, camera));
     scene.remove(...warm);
     renderer.shadowMap.needsUpdate = true;
+    audio.prepare();
     events.onReady(stage);
 
     // The fractured pieces come after the first frame: nobody captures in the first seconds.
@@ -591,16 +645,21 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
     broken = await Promise.all([0, 1, 2].map(v => Promise.all([1, 2].map(l =>
       gltf.loadAsync(`/models/damage/slab${v}-${l}.glb`).then(g => g.scene, () => null)))));
     if (disposed) return;
-    // Warm their programs (and instanced grit) without blocking a frame.
+    // Warm their programs (and instanced grit, and a broken slab) without blocking a frame.
     const sample = shards.p.clone();
     const pieceMat = (pieces[0][0].getObjectByProperty('isMesh', true) as THREE.Mesh).material as THREE.Material;
     sample.traverse(o => { const m = o as THREE.Mesh; if (m.isMesh) m.material = (m.material as THREE.Material).name === 'interior' ? interior.tezontle : pieceMat; });
     const grit = new THREE.InstancedMesh(new THREE.DodecahedronGeometry(1, 0), pieceMat, 1);
-    sample.position.y = -5;
-    grit.position.y = -5;
-    scene.add(sample, grit);
-    await renderer.compileAsync(scene, camera);
-    scene.remove(sample, grit);
+    const samples: THREE.Object3D[] = [sample, grit];
+    for (const stone of ['cantera', 'andesite'] as const) {
+      const src = broken.flat().find(Boolean);
+      const s = src && [...slabs.values()].find(x => x.stone === stone);
+      if (src && s) samples.push(dress(src, s));
+    }
+    for (const o of samples) o.position.y = -5;
+    scene.add(...samples);
+    await inComposer(() => renderer.compileAsync(scene, camera));
+    scene.remove(...samples);
   })();
 
   // ── Post: bloom only catches what burns ───────────────────────────────────
@@ -610,12 +669,19 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
   const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.42, 0.3, 1.0);
   composer.addPass(bloom);
   composer.addPass(new OutputPass());
+  // Programs are keyed by where they draw: the scene goes into the composer's
+  // buffer (linear, no tone mapping), so that's where the warm-up must compile.
+  function inComposer<T>(f: () => T): T {
+    renderer.setRenderTarget(composer.readBuffer);
+    try { return f(); } finally { renderer.setRenderTarget(null); }
+  }
 
   // ── Pointer: a click is a press that didn't become a drag ─────────────────
   // Orbit drags belong to OrbitControls; on foot a drag turns your head.
   const ndc = new THREE.Vector2();
   let down: { x: number; y: number; lx: number; ly: number; moved: number } | null = null;
   let hovered = '';
+  let rush = 1;
   const toNdc = (e: PointerEvent) => {
     const r = canvas.getBoundingClientRect();
     ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
@@ -629,6 +695,7 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
   const onUp = (e: PointerEvent) => {
     const d = down;
     down = null;
+    if (d && d.moved <= 6 && mode === 'scripted') rush = 3; // impatient: a click hurries the camera along
     if (!d || !board || (mode !== 'orbit' && mode !== 'walk')) return;
     if (d.moved > 6) return;
     toNdc(e);
@@ -714,7 +781,8 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
     const raw = timer.getDelta();
     const real = Math.min(raw, 1 / 20);
     now += real;
-    const dt = real * timeScale();
+    if (mode !== 'scripted') rush = 1;
+    const dt = real * timeScale() * rush;
     const t = timer.getElapsed();
     advance(dt);
     const moving = board?.update(dt);

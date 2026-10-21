@@ -134,7 +134,9 @@ export function createGame(stage: Stage, engine: Engine, emit: (v: View) => void
     if (!byMachine) { selected = null; targets = []; } else targets = [];
     stage.board.highlight({ selected });
     publish();
-    await stage.play(move, chess.history().length);
+    // Two players at one screen: the board turns to whoever moves next.
+    const facing = settings.mode === 'friend' && !chess.isGameOver() ? chess.turn() : undefined;
+    await stage.play(move, chess.history().length, facing);
     if (chess.isCheckmate()) {
       // The mated king comes down where he stands; the conch sounds over the plaza.
       deselect();
@@ -178,7 +180,7 @@ export function createGame(stage: Stage, engine: Engine, emit: (v: View) => void
       publish();
       // Play may be the very first gesture: the conch waits for the sounds to arrive.
       stage.audio.loaded?.then(() => stage.audio.play('conch', { gain: 0.5 }));
-      await stage.toGame(s.side);
+      await stage.toGame(s.mode === 'friend' ? chess.turn() : s.side);
       busy = false;
       marks();
       publish();
@@ -256,6 +258,7 @@ export function createGame(stage: Stage, engine: Engine, emit: (v: View) => void
       stage.board.setBoard(chess.board(), chess.history().length);
       marks();
       publish();
+      if (settings.mode === 'friend') stage.face(chess.turn());
       if (machineTurn()) machine();
     },
 

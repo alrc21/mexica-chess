@@ -30,9 +30,13 @@ export function createAudio() {
   let done = false;
   const queued: (() => void)[] = []; // loops asked for before the files arrived
 
-  /** Browsers only let sound start inside a gesture: the first tap or click opens it. */
-  function unlock() {
-    if (ctx) { if (ctx.state === 'suspended') ctx.resume(); return; }
+  let unlocked = false;
+  /**
+   * The context is made (suspended) and the files decoded behind the curtain:
+   * making a context costs ~80 ms, which shouldn't land on the first click.
+   */
+  function prepare() {
+    if (ctx) return;
     ctx = new AudioContext();
     master = ctx.createGain();
     master.gain.value = muted ? 0 : 1;
@@ -48,6 +52,13 @@ export function createAudio() {
         buffers.set(f, await c.decodeAudioData(await res.arrayBuffer()));
       } catch { /* a missing or broken file is a silent sound, not a silent game */ }
     })).then(() => { done = true; for (const q of queued.splice(0)) q(); });
+  }
+
+  /** Browsers only let sound start inside a gesture: the first tap or click opens it. */
+  function unlock() {
+    prepare();
+    unlocked = true;
+    if (ctx!.state === 'suspended') ctx!.resume();
   }
 
   function pick(name: Sound, variant?: number) {
@@ -69,7 +80,7 @@ export function createAudio() {
   }
 
   function play(name: Sound, o: Opts = {}) {
-    if (!ctx || !master || !done) return; // a late one-shot would land on the wrong moment
+    if (!ctx || !master || !done || !unlocked) return; // a late one-shot would land on the wrong moment
     const buffer = pick(name, o.variant);
     if (!buffer) return;
     const src = ctx.createBufferSource();
@@ -133,12 +144,13 @@ export function createAudio() {
   }
 
   return {
+    prepare,
     unlock,
     play,
     loop,
     fade,
     listen,
-    get started() { return !!ctx; },
+    get started() { return unlocked; },
     get loaded() { return ready; },
     get muted() { return muted; },
     setMuted(m: boolean) {

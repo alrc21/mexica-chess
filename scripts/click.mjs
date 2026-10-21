@@ -30,9 +30,10 @@ for (const [a, b] of cases) {
   await click(a, 0.45);
   if (a === 'g1') await page.screenshot({ path: `${out}/tiles-knight.png` });
   await click(b);
-  await sleep(1400);
+  await sleep(2700); // the move, then the board turns to the other player
   console.log(`${a}→${b}:`, await history());
 }
+await page.screenshot({ path: `${out}/turned-to-tezontle.png` });
 await click('c4', 0.45); await sleep(300);
 await page.screenshot({ path: `${out}/tiles-bishop.png` });
 await click('c4', 0.45); await click('d1', 0.45); await sleep(300);
