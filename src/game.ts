@@ -285,7 +285,7 @@ export function createGame(stage: Stage, engine: Engine, emit: (v: View) => void
     async start(s: Settings) {
       settings = s;
       lesson = null;
-      generation++;
+      const g = ++generation;
       engine.stop();
       engine.newGame();
       chess.reset();
@@ -301,6 +301,7 @@ export function createGame(stage: Stage, engine: Engine, emit: (v: View) => void
       // Play may be the very first gesture: the conch waits for the sounds to arrive.
       stage.audio.loaded?.then(() => stage.audio.play('conch', { gain: 0.5 }));
       await Promise.all([rebuilt, stage.toGame(s.mode === 'friend' ? chess.turn() : s.side)]);
+      if (g !== generation) return; // left or started again before it was set out
       busy = false;
       marks();
       publish();

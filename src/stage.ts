@@ -313,7 +313,7 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
       const plates: THREE.Mesh[] = [];
       broken.traverse(o => { const m = o as THREE.Mesh; if (m.morphTargetInfluences) plates.push(m); });
       const w0 = plates[0]?.morphTargetInfluences![0] ?? 1;
-      audio.play('slab', { at: broken.position, gain: 0.3, rate: 0.75, delay: dur * 0.5 });
+      if (mending.size === 1) audio.play('slab', { gain: 0.35, rate: 0.75, delay: dur * 0.5 }); // one sound for the whole floor
       tween(dur, k => {
         if (!broken.parent) return; // taken back at once
         const e = easeInOut(k);
