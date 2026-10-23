@@ -31,9 +31,11 @@ type Effect = (dt: number) => boolean; // false when finished
 export type BoardHooks = {
   impact(at: THREE.Vector3, power: number): void;
   /** Breaks the slab under `sq`; returns the bits of floor the blow throws out. */
-  scar(sq: Square, ply: number): THREE.Object3D[];
-  heal(ply: number): void;
+  scar(sq: Square, ply: number, gain?: number): THREE.Object3D[];
+  /** Takes back scars after `ply`: at once, or rising back level over `dur` seconds. */
+  heal(ply: number, dur?: number): void;
 };
+type Position = ({ square: Square; type: PieceSymbol; color: Color } | null)[][];
 
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
 
@@ -174,8 +176,12 @@ export function createBoard(scene: THREE.Scene, models: Models, sfx: Sfx, hooks:
 
   let dirty = false; // pieces changed without an effect running: shadows must catch up once
   let ply = 0; // the move being played: scars and rubble remember it, so Undo can take them back
-  /** Set out the pieces for a position `at` plies in; marks of later moves are taken back. */
-  function setBoard(board: ({ square: Square; type: PieceSymbol; color: Color } | null)[][], at = 0) {
+  let era = 0; // bumps when the board is set out again: an older fall or rebuild stops touching it
+  let building: { board: Position; at: number } | null = null;
+  /** Set out the pieces for a position `at` plies in at once; marks of later moves are taken back. */
+  function setBoard(board: Position, at = 0) {
+    era++;
+    building = null;
     dirty = true;
     rubble.heal(at);
     hooks.heal(at);
@@ -184,6 +190,145 @@ export function createBoard(scene: THREE.Scene, models: Models, sfx: Sfx, hooks:
     lifted = null;
     followContacts(); // the cleared stones take their shadows
     for (const p of board.flat()) if (p) spawn(p.color, p.type, p.square);
+  }
+
+  /**
+   * Set out a position by moving the stone there: the floor mends, the stones
+   * still standing walk back to their squares, the broken ones gather
+   * themselves out of their own rubble. `pace` 1 for a new game, less for an
+   * undo. An empty board (the first game) is set out at once.
+   */
+  async function rebuild(board: Position, at = 0, pace = 1) {
+    if (building) setBoard(building.board, building.at); // the one under way finishes at once
+    if (!pieces.size) { setBoard(board, at); return; }
+    const id = ++era;
+    building = { board, at };
+    ply = at;
+    dirty = true;
+    lifted = null;
+    const loose = new Map(pieces);
+    pieces.clear();
+    for (const o of [...group.children]) if (![...loose.values()].includes(o)) group.remove(o); // caught mid-fall
+    const jobs: Promise<unknown>[] = [];
+    const missing: { square: Square; type: PieceSymbol; color: Color }[] = [];
+    const wanted = board.flat().filter(p => !!p);
+    const same = (o: THREE.Object3D, p: { type: PieceSymbol; color: Color }) => o.userData.type === p.type && o.userData.color === p.color;
+    // Already where it belongs: stays.
+    const rest = wanted.filter(p => {
+      const o = loose.get(p.square);
+      if (!o || !same(o, p)) return true;
+      loose.delete(p.square);
+      pieces.set(p.square, o);
+      return false;
+    });
+    // Standing elsewhere: the nearest of its kind walks back.
+    let n = 0;
+    for (const p of rest) {
+      const to = squarePos(p.square);
+      let best: Square | null = null;
+      for (const [sq, o] of loose) if (same(o, p) && (!best || o.position.distanceTo(to) < loose.get(best)!.position.distanceTo(to))) best = sq;
+      if (!best) { missing.push(p); continue; }
+      const o = loose.get(best)!;
+      loose.delete(best);
+      pieces.set(p.square, o);
+      o.userData.square = p.square;
+      jobs.push(carry(o, to, (0.1 + 0.05 * n++) * pace, 0.9 * pace, id));
+    }
+    // Left over (a crowned pawn taken back): it sinks into the floor.
+    for (const o of loose.values()) jobs.push(sink(o, 0.5 * pace, id));
+    // The floor mends, and the broken stone gathers itself, from the middle of the board out.
+    const mend = 0.8 * pace;
+    hooks.heal(at, mend);
+    jobs.push(rubble.gather(at, missing.map(p => {
+      const to = squarePos(p.square);
+      return { type: p.type, stone: STONE[p.color], source: models[p.color][p.type], at: to, rot: p.color === 'w' ? Math.PI : 0, delay: (0.3 + 0.25 * Math.max(0, Math.hypot(to.x, to.z) - 2.4)) * pace };
+    }), pace, mend, i => {
+      if (id !== era) return;
+      const p = missing[i];
+      const o = spawn(p.color, p.type, p.square);
+      sfx('thud', o.position, 0.35, 1.3);
+      rubble.puff(o.position, 5, 0.35, 0.1);
+    }));
+    await Promise.all(jobs);
+    if (id === era) building = null;
+  }
+
+  /** A stone walking home on a low arc: no blow, no shake. */
+  function carry(o: THREE.Object3D, to: THREE.Vector3, delay: number, dur: number, id: number) {
+    const from = o.position.clone();
+    const h = 0.2 + 0.08 * from.distanceTo(to);
+    let started = false;
+    return tween(delay + dur, k => {
+      if (id !== era) return;
+      const e = easeInOut(THREE.MathUtils.clamp((k * (delay + dur) - delay) / dur, 0, 1));
+      if (e > 0 && !started) { started = true; sfx('grind', from, 0.25, rand(0.85, 1.1)); }
+      o.position.lerpVectors(from, to, e);
+      o.position.y = from.y + (to.y - from.y) * e + Math.sin(Math.PI * e) * h;
+    });
+  }
+
+  function sink(o: THREE.Object3D, dur: number, id: number) {
+    const s0 = o.scale.clone();
+    rubble.puff(o.position, 10, 0.6, 0.2);
+    sfx('crumble', o.position, 0.4, 1.2);
+    return tween(dur, k => {
+      if (id !== era) return;
+      o.scale.copy(s0).multiplyScalar(Math.max(0.001, 1 - k * k));
+      if (k === 1) group.remove(o);
+    });
+  }
+
+  /**
+   * Checkmate takes the whole army: after the king, his stones go down one
+   * after another, out from where he fell — each one shudders, tips away from
+   * him and breaks as it goes over, and the slab it stood on cracks.
+   */
+  async function fall(color: Color, from: Square, at: number) {
+    ply = at;
+    const id = era;
+    const origin = squarePos(from);
+    const army = [...pieces.values()].filter(o => o.userData.color === color)
+      .map(o => ({ o, d: Math.hypot(o.position.x - origin.x, o.position.z - origin.z) }));
+    await Promise.all(army.map(({ o, d }) => topple(o, origin, 0.2 + 0.13 * d + rand(0, 0.06), id)));
+    await tween(1.1, () => {}); // a breath while the last of it comes to rest
+  }
+
+  async function topple(o: THREE.Object3D, origin: THREE.Vector3, delay: number, id: number) {
+    await tween(delay, () => {});
+    if (id !== era || o.parent !== group) return;
+    const { type, color, square, h } = o.userData as { type: PieceSymbol; color: Color; square: Square; h: number };
+    pieces.delete(square);
+    const p0 = o.position.clone();
+    const dir = p0.clone().sub(origin).setY(0);
+    if (dir.lengthSq() < 1e-6) dir.set(rand(-1, 1), 0, rand(-1, 1));
+    dir.normalize();
+    const axis = up.clone().cross(dir);
+    const base = o.quaternion.clone();
+    const edge = p0.clone().addScaledVector(dir, 0.34); // it pivots on the plinth's far edge
+    sfx('grind', p0, 0.3, rand(0.7, 0.85));
+    // It loses its footing…
+    await tween(0.24, k => {
+      if (id !== era) return;
+      const a = 0.006 * k;
+      o.position.set(p0.x + rand(-a, a), p0.y, p0.z + rand(-a, a));
+    });
+    if (id !== era || o.parent !== group) return;
+    // …and goes over, faster and faster.
+    const q = new THREE.Quaternion();
+    await tween(0.3 + 0.2 * h, k => {
+      if (id !== era) return;
+      q.setFromAxisAngle(axis, 0.85 * k * k);
+      o.quaternion.copy(base).premultiply(q);
+      o.position.copy(p0).sub(edge).applyQuaternion(q).add(edge);
+    });
+    if (id !== era || o.parent !== group) return;
+    // It breaks partway down; the slab it stood on cracks as its foot tears out.
+    rubble.burst(o, type, STONE[color], dir, 1.3, ply, true);
+    rubble.fling(hooks.scar(square, ply, 0.35), dir, 0.35, ply);
+    const at = p0.clone().addScaledVector(dir, 0.4).setY(0.3);
+    sfx('crack', at, 0.45, rand(0.85, 1.1));
+    sfx('thud', at, 0.5, rand(0.75, 0.95));
+    hooks.impact(at, 0.12);
   }
 
   // Tiles light up in a wave running out from the selected piece along its paths.
@@ -457,6 +602,8 @@ export function createBoard(scene: THREE.Scene, models: Models, sfx: Sfx, hooks:
   const obstacles: Obstacle[] = [];
   return {
     setBoard,
+    rebuild,
+    fall,
     highlight,
     hoverTile,
     lift,

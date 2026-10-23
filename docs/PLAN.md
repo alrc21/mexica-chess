@@ -109,6 +109,19 @@ Each phase ends with before/after screenshots in `docs/evidence/`.
   so no frame is dropped (180° motion blur in the edit), the rook turned in
   Blender from raw masses to sculpt to baked stone, the game's CC0 recordings
   for sound. The film and the posts live with the studio's files, not here.
+- [x] **7c. The fall and the gathering.** Checkmate takes the whole army:
+  after the king, each of his stones shudders, tips away from where he fell
+  and breaks as it goes over (a soft burst: carried on along the fall, no kick
+  upward), the slab under it cracks; the title waits for the dust. Undo and a
+  new game run it backwards instead of popping: grit sinks, broken slabs rise
+  level while their bits fly back into the crater, standing stones walk home,
+  and each broken stone gathers itself out of its own rubble (chunks keep
+  their rest pose; a piece rebuilt on another square is moved by
+  `home · frame⁻¹`), from the plinth up; a crowned pawn taken back sinks. A
+  new game from the last turns the camera round the board instead of flying
+  over it. `scripts/fall.mjs` shoots it all with the page clock at 0.2×
+  (`docs/evidence/phase7c-*`): no long tasks, 68 fps at 1440×900@2x in the
+  fall.
 - [ ] **8. Next.** A real-iPhone pass; a phone download under 10 MB before
   play (phone-sized piece textures, the precinct after the first frame);
   KTX2 for VRAM (`scripts/ktx2.mjs` is ready); 2K stone on desktop.

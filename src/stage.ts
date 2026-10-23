@@ -264,7 +264,7 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
    * overshoot and settle — and the bits it throws out of the crater are
    * handed back to the board to fly as rubble.
    */
-  const scar = (sq: Square, ply: number): THREE.Object3D[] => {
+  const scar = (sq: Square, ply: number, gain = 1): THREE.Object3D[] => {
     const s = slabs.get(sq);
     const src = s && broken[s.variant]?.[s.stack.length - 1]; // intact → cracked → shattered
     if (!s || !src) return [];
@@ -285,15 +285,41 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
       const w = 1 - Math.exp(-t / 0.1) * Math.cos(t * Math.PI / 0.17);
       for (const m of plates) m.morphTargetInfluences![0] = w;
     });
-    audio.play('slab', { at: obj.position, gain: 0.9 });
-    audio.play('dust', { at: obj.position, gain: 0.5, delay: 0.35 });
+    audio.play('slab', { at: obj.position, gain: 0.9 * gain });
+    audio.play('dust', { at: obj.position, gain: 0.5 * gain, delay: 0.35 });
     renderer.shadowMap.needsUpdate = true;
     return chips;
   };
-  const heal = (ply: number) => {
+  /**
+   * Takes the damage of moves after `ply` back. Over `dur` seconds the broken
+   * slab rises level again — plates lift out of the dish, the cracks close —
+   * while its bits fly back into the crater, then it's the whole slab.
+   */
+  const mending = new Set<THREE.Object3D>();
+  const heal = (ply: number, dur = 0) => {
+    for (const o of mending) scene.remove(o); // a mend under way ends at once
+    mending.clear();
     for (const s of slabs.values()) {
-      while (s.stack.length > 1 && s.stack[s.stack.length - 1].ply > ply) scene.remove(s.stack.pop()!.obj);
-      s.stack[s.stack.length - 1].obj.visible = true;
+      let top: THREE.Object3D | null = null;
+      while (s.stack.length > 1 && s.stack[s.stack.length - 1].ply > ply) {
+        const o = s.stack.pop()!.obj;
+        if (dur && !top) top = o;
+        else scene.remove(o);
+      }
+      const under = s.stack[s.stack.length - 1].obj;
+      if (!top) { under.visible = true; continue; }
+      const broken = top;
+      mending.add(broken);
+      const plates: THREE.Mesh[] = [];
+      broken.traverse(o => { const m = o as THREE.Mesh; if (m.morphTargetInfluences) plates.push(m); });
+      const w0 = plates[0]?.morphTargetInfluences![0] ?? 1;
+      audio.play('slab', { at: broken.position, gain: 0.3, rate: 0.75, delay: dur * 0.5 });
+      tween(dur, k => {
+        if (!broken.parent) return; // taken back at once
+        const e = easeInOut(k);
+        for (const m of plates) m.morphTargetInfluences![0] = w0 * (1 - e);
+        if (k === 1) { scene.remove(broken); mending.delete(broken); under.visible = true; }
+      });
     }
   };
 
@@ -476,7 +502,9 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
       side = s;
       walking = false;
       walk.stop();
-      await fly(GAME(s), 2.8);
+      // Already over the board (a new game from the last): round to the side, eyes on the stone rebuilding.
+      if (mode === 'orbit') await orbitTo(GAME(s), 2.2);
+      else await fly(GAME(s), 2.8);
       if (id !== turn) return;
       setNear(0.1);
       toOrbit(GAME(s));

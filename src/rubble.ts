@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { PieceSymbol } from 'chess.js';
 import type { Sound } from './audio';
+import { easeInOut, tween } from './anim';
 
 /**
  * A captured piece breaks into pieces of itself: chunks cut from its own baked
@@ -24,6 +25,9 @@ const rand = (a: number, b: number) => a + Math.random() * (b - a);
 
 type Body = {
   o: THREE.Object3D;
+  // Where it sat in the whole piece (or slab): a rebuild puts it back there.
+  rest: THREE.Vector3;
+  restQ: THREE.Quaternion;
   crumble?: number; // seconds into crumbling to dust (big chunks only)
   v: THREE.Vector3;
   w: THREE.Vector3;
@@ -152,8 +156,13 @@ export function createRubble(scene: THREE.Scene, sfx: Sfx) {
   scene.add(dust.points, sparks.points);
   let shards: Partial<Record<PieceSymbol, THREE.Object3D>> = {};
   let interior: Partial<Record<Stone, THREE.Material>> = {};
-  type Pile = { bodies: Body[]; grit: THREE.InstancedMesh; gritBodies: Body[]; age: number; root: THREE.Group; ply: number; settled: boolean };
+  type Pile = {
+    bodies: Body[]; grit: THREE.InstancedMesh; gritBodies: Body[]; age: number; root: THREE.Group; ply: number; settled: boolean;
+    /** The piece it was and how it stood (floor bits have none: they go back where they were). */
+    piece?: { type: PieceSymbol; stone: Stone; frame: THREE.Matrix4 };
+  };
   const piles: Pile[] = [];
+  const gathering = new Set<THREE.Object3D>(); // roots taken out of the piles by a rebuild
   const CRUMBLE_AFTER = 2.4; // seconds a settled chunk lies there before it goes to dust
   const CRUMBLE_FOR = 0.9;
   const CRUMBS = 6; // grit left behind by each chunk
@@ -168,8 +177,43 @@ export function createRubble(scene: THREE.Scene, sfx: Sfx) {
     const corners: THREE.Vector3[] = [];
     for (const x of [box.min.x, box.max.x]) for (const y of [box.min.y, box.max.y]) for (const z of [box.min.z, box.max.z])
       corners.push(new THREE.Vector3(x, y, z).sub(c));
-    return { o, v: new THREE.Vector3(), w: new THREE.Vector3(), corners, r: box.getSize(tmp).length() / 2, asleep: false, loud: true };
+    return {
+      o, rest: o.position.clone(), restQ: o.quaternion.clone(),
+      v: new THREE.Vector3(), w: new THREE.Vector3(), corners, r: box.getSize(tmp).length() / 2, asleep: false, loud: true,
+    };
   }
+
+  /** The chunks of `type`, laid out as the whole piece standing like `at`; each turns about its own centre. */
+  function cut(type: PieceSymbol, stone: Stone, exterior: THREE.Material, at: THREE.Object3D) {
+    const root = new THREE.Group();
+    scene.add(root);
+    const bodies: Body[] = [];
+    const copy = shards[type]!.clone();
+    copy.position.copy(at.position);
+    copy.quaternion.copy(at.quaternion);
+    copy.scale.copy(at.scale);
+    copy.updateMatrixWorld(true);
+    for (const node of [...copy.children]) {
+      node.traverse(o => {
+        const m = o as THREE.Mesh;
+        if (!m.isMesh) return;
+        m.material = (m.material as THREE.Material).name === 'interior' ? interior[stone]! : exterior;
+        m.castShadow = m.receiveShadow = true;
+      });
+      const b = new THREE.Box3().setFromObject(node);
+      const pivot = new THREE.Object3D();
+      b.getCenter(pivot.position);
+      root.add(pivot);
+      pivot.attach(node);
+      bodies.push(body(pivot, b));
+    }
+    return { root, bodies, frame: copy.matrixWorld.clone() };
+  }
+  const exteriorOf = (o: THREE.Object3D) => {
+    let m: THREE.Material | undefined;
+    o.traverse(c => { if ((c as THREE.Mesh).isMesh) m = (c as THREE.Mesh).material as THREE.Material; });
+    return m;
+  };
 
   /** Dust rolling out from a base: a landing, a capture, a collapse. */
   function puff(at: THREE.Vector3, n: number, strength = 1, rise = 0.25) {
@@ -183,54 +227,41 @@ export function createRubble(scene: THREE.Scene, sfx: Sfx) {
 
   /**
    * Break `victim` (a placed piece) apart. `blow` is the attacker's direction of
-   * travel (zero for a collapse in place), `power` how hard it was hit.
+   * travel (zero for a collapse in place), `power` how hard it was hit. `soft`:
+   * nothing struck it — it fell over, and breaks on along its fall.
    */
-  function burst(victim: THREE.Object3D, type: PieceSymbol, stone: Stone, blow: THREE.Vector3, power: number, ply = 0) {
+  function burst(victim: THREE.Object3D, type: PieceSymbol, stone: Stone, blow: THREE.Vector3, power: number, ply = 0, soft = false) {
     const box = new THREE.Box3().setFromObject(victim);
     const c0 = box.getCenter(new THREE.Vector3());
     const height = box.max.y - box.min.y;
-    let exterior: THREE.Material | undefined;
-    victim.traverse(o => { if ((o as THREE.Mesh).isMesh) exterior = (o as THREE.Mesh).material as THREE.Material; });
+    const exterior = exteriorOf(victim);
     victim.parent?.remove(victim);
 
-    const root = new THREE.Group();
-    scene.add(root);
-    const bodies: Body[] = [];
-    const src = shards[type];
-    if (src && exterior) {
-      const copy = src.clone();
-      copy.position.copy(victim.position);
-      copy.quaternion.copy(victim.quaternion);
-      copy.scale.copy(victim.scale);
-      copy.updateMatrixWorld(true);
-      for (const node of [...copy.children]) {
-        node.traverse(o => {
-          const m = o as THREE.Mesh;
-          if (!m.isMesh) return;
-          m.material = (m.material as THREE.Material).name === 'interior' ? interior[stone]! : exterior!;
-          m.castShadow = m.receiveShadow = true;
-        });
-        const b = new THREE.Box3().setFromObject(node);
-        const pivot = new THREE.Object3D();
-        b.getCenter(pivot.position);
-        root.add(pivot);
-        pivot.attach(node); // rotations turn about the chunk's own centre
-        bodies.push(body(pivot, b));
-      }
-    }
+    const made = shards[type] && exterior ? cut(type, stone, exterior, victim) : null;
+    const root = made?.root ?? new THREE.Group();
+    if (!made) scene.add(root);
+    const bodies = made?.bodies ?? [];
+    const axis = new THREE.Vector3(0, 1, 0).cross(blow);
     // Throw: along the blow, out from the centre, upward — the higher, the harder.
-    for (const b of bodies) {
+    bodies.forEach((b, i) => {
       const p = b.o.position;
       const up = (p.y - box.min.y) / height;
       const out = tmp.copy(p).sub(c0).setY(0).normalize();
+      if (soft) {
+        // Falling over: carried on along the fall, turning the way the stone turned, no kick upward.
+        b.v.copy(blow).multiplyScalar(power * (0.25 + up) * rand(0.8, 1.15)).addScaledVector(out, rand(0.05, 0.3));
+        b.w.copy(axis).multiplyScalar(rand(2, 3.5)).add(new THREE.Vector3(rand(-1, 1), rand(-1, 1), rand(-1, 1)));
+        b.loud = i % 3 === 0; // a whole army falls at once: not every chunk speaks
+        return;
+      }
       b.v.copy(blow).multiplyScalar(power * (0.6 + 0.9 * up) * rand(0.7, 1.2))
         .addScaledVector(out, rand(0.25, 0.9) * (0.4 + power * 0.5))
         .add(new THREE.Vector3(0, rand(0.5, 1.4) * power * (0.3 + up), 0));
       b.w.set(rand(-1, 1), rand(-1, 1), rand(-1, 1)).normalize().multiplyScalar(rand(2, 7) / Math.max(0.5, b.r * 5));
-    }
+    });
 
     // Grit: small stones of the same material, one draw call — room for the crumbs to come.
-    const n = 44;
+    const n = soft ? 20 : 44;
     const grit = new THREE.InstancedMesh(GRIT, exterior ?? new THREE.MeshStandardMaterial(), n + bodies.length * CRUMBS);
     grit.count = n;
     grit.castShadow = true;
@@ -245,7 +276,7 @@ export function createRubble(scene: THREE.Scene, sfx: Sfx) {
       o.rotation.set(rand(0, 6), rand(0, 6), rand(0, 6));
       const b = body(o, new THREE.Box3().setFromCenterAndSize(o.position, tmp.copy(o.scale).multiplyScalar(1.6)));
       const out = new THREE.Vector3().copy(o.position).sub(c0).setY(0).normalize();
-      b.v.copy(blow).multiplyScalar(power * rand(0.3, 1.4)).addScaledVector(out, rand(0.5, 2.2)).add(new THREE.Vector3(0, rand(0.8, 2.6) * Math.max(0.4, power * 0.8), 0));
+      b.v.copy(blow).multiplyScalar(power * rand(0.3, 1.4)).addScaledVector(out, rand(0.5, 2.2) * (soft ? 0.3 : 1)).add(new THREE.Vector3(0, rand(0.8, 2.6) * Math.max(0.4, power * 0.8) * (soft ? 0.25 : 1), 0));
       b.w.set(rand(-12, 12), rand(-12, 12), rand(-12, 12));
       b.loud = false;
       gritBodies.push(b);
@@ -253,7 +284,7 @@ export function createRubble(scene: THREE.Scene, sfx: Sfx) {
 
     // Sparks off the struck face, a ring of dust from the base, a column from the body.
     const strike = tmp.copy(c0).addScaledVector(blow, -0.25);
-    for (let i = 0; i < 26 * Math.min(1, power); i++) {
+    for (let i = 0; i < (soft ? 0 : 26 * Math.min(1, power)); i++) {
       const v = new THREE.Vector3(rand(-1, 1), rand(0.2, 1.4), rand(-1, 1)).normalize().multiplyScalar(rand(1.5, 4)).addScaledVector(blow, 1.5);
       sparks.emit(strike, v, rand(0.25, 0.65), rand(0.025, 0.045), 0.012, 1, 0.8, 9);
     }
@@ -262,7 +293,7 @@ export function createRubble(scene: THREE.Scene, sfx: Sfx) {
       tmp.set(rand(box.min.x, box.max.x), rand(box.min.y, box.max.y), rand(box.min.z, box.max.z));
       dust.emit(tmp, new THREE.Vector3(rand(-0.3, 0.3), rand(0, 0.35), rand(-0.3, 0.3)).addScaledVector(blow, 0.5 * power), rand(2.2, 3.6), rand(0.28, 0.45), rand(1.0, 1.7), 0.35, 1.6, -0.03);
     }
-    piles.push({ bodies, grit, gritBodies, age: 0, root, ply, settled: false });
+    piles.push({ bodies, grit, gritBodies, age: 0, root, ply, settled: false, piece: { type, stone, frame: made?.frame ?? victim.matrixWorld.clone() } });
   }
 
   /**
@@ -296,6 +327,121 @@ export function createRubble(scene: THREE.Scene, sfx: Sfx) {
     const grit = new THREE.InstancedMesh(GRIT, undefined, 0);
     puff(new THREE.Vector3(at.x, 0, at.z), 10, 0.7, 0.45);
     piles.push({ bodies, grit, gritBodies: [], age: 0, root, ply, settled: false });
+  }
+
+  // ── Rebuild: what broke gathers itself again ──────────────────────────
+  const drop = (root: THREE.Object3D) => {
+    scene.remove(root);
+    gathering.delete(root);
+    root.traverse(o => { if ((o as THREE.InstancedMesh).isInstancedMesh) (o as THREE.InstancedMesh).dispose(); });
+  };
+
+  /**
+   * Chunks fly back to their rest (moved by `to`, when the piece is rebuilt
+   * somewhere else than where it died): dust grows back into stone, each
+   * rising on a low arc, the lowest first — the piece builds up from its plinth.
+   * `done` fires in the frame the last one lands.
+   */
+  function home(bodies: Body[], to: THREE.Matrix4 | null, delay: number, len: number, spread: number, done: () => void) {
+    const turn = to && new THREE.Quaternion().setFromRotationMatrix(to);
+    const root = bodies[0]?.o.parent ?? null;
+    const legs = bodies.map(b => {
+      const p1 = b.rest.clone();
+      if (to) p1.applyMatrix4(to);
+      const q1 = turn ? turn.clone().multiply(b.restQ) : b.restQ.clone();
+      // Off the summit and into the trees: it comes back from the ground beside the square instead.
+      const p0 = b.o.position.y < -1 ? p1.clone().add(new THREE.Vector3(rand(-0.6, 0.6), 0, rand(-0.6, 0.6))).setY(SLAB_TOP) : b.o.position.clone();
+      const s0 = b.o.position.y < -1 ? 0.001 : Math.max(0.001, b.o.scale.x);
+      b.o.visible = true;
+      b.asleep = true;
+      return { b, p0, q0: b.o.quaternion.clone(), s0, p1, q1, arc: 0.12 + 0.3 * Math.min(1, p0.distanceTo(p1)), d: 0 };
+    });
+    const lo = Math.min(...legs.map(l => l.p1.y)), hi = Math.max(...legs.map(l => l.p1.y));
+    // No jitter without a spread: floor bits must land in the very frame their slab closes.
+    for (const l of legs) l.d = delay + (spread ? spread * (hi > lo ? (l.p1.y - lo) / (hi - lo) : 0) + rand(0, 0.05) : 0);
+    const total = Math.max(delay, ...legs.map(l => l.d)) + len;
+    return tween(total, k => {
+      if (root && !root.parent) return; // taken back at once
+      const t = k * total;
+      for (const l of legs) {
+        const e = easeInOut(THREE.MathUtils.clamp((t - l.d) / len, 0, 1));
+        l.b.o.position.lerpVectors(l.p0, l.p1, e);
+        l.b.o.position.y += Math.sin(Math.PI * e) * l.arc;
+        l.b.o.quaternion.slerpQuaternions(l.q0, l.q1, e);
+        l.b.o.scale.setScalar(l.s0 + (1 - l.s0) * Math.min(1, e * 1.6));
+      }
+      if (k === 1) done();
+    });
+  }
+
+  /** Grit sinks back into the stone. */
+  function sinkGrit(p: Pile, dur: number) {
+    const s0 = p.gritBodies.map(b => b.o.scale.clone());
+    return tween(dur, k => {
+      if (!p.root.parent) return;
+      p.gritBodies.forEach((b, i) => {
+        b.o.scale.copy(s0[i]).multiplyScalar(Math.max(0.001, 1 - k * k));
+        b.o.updateMatrix();
+        p.grit.setMatrixAt(i, b.o.matrix);
+      });
+      p.grit.instanceMatrix.needsUpdate = true;
+    });
+  }
+
+  type Want = { type: PieceSymbol; stone: Stone; source: THREE.Object3D; at: THREE.Vector3; rot: number; delay: number };
+  /**
+   * Everything that broke after `ply` gathers itself again. Each wanted piece
+   * is built from the rubble of one of its kind (the nearest), else from fresh
+   * chunks rising off the floor; bits of floor fly back into their craters in
+   * `mend` seconds, the beat the slab rises in; the rest goes to dust.
+   * `whole(i)` fires in the frame the i-th piece is complete: swap the real one in then.
+   */
+  function gather(ply: number, wants: Want[], pace: number, mend: number, whole: (i: number) => void) {
+    const taken = piles.filter(p => p.ply > ply);
+    for (const p of taken) { piles.splice(piles.indexOf(p), 1); gathering.add(p.root); }
+    const jobs: Promise<void>[] = taken.map(p => sinkGrit(p, 0.5 * pace));
+    for (const p of taken) if (!p.piece) jobs.push(home(p.bodies, null, 0, mend, 0, () => drop(p.root)));
+    const free = taken.filter(p => p.piece);
+    wants.forEach((w, i) => {
+      const at = new THREE.Object3D();
+      at.position.copy(w.at);
+      at.rotation.y = w.rot;
+      at.scale.copy(w.source.scale);
+      at.updateMatrix();
+      const far = (p: Pile) => tmp.setFromMatrixPosition(p.piece!.frame).distanceTo(w.at);
+      let pile: Pile | undefined;
+      for (const p of free) if (p.piece!.type === w.type && p.piece!.stone === w.stone && (!pile || far(p) < far(pile))) pile = p;
+      if (pile) {
+        free.splice(free.indexOf(pile), 1);
+        const to = at.matrix.clone().multiply(pile.piece!.frame.clone().invert());
+        const root = pile.root;
+        puff(w.at, 6, 0.4, 0.15);
+        jobs.push(home(pile.bodies, to, w.delay, 0.75 * pace, 0.45 * pace, () => { drop(root); whole(i); }));
+        return;
+      }
+      const exterior = exteriorOf(w.source);
+      if (!shards[w.type] || !exterior) { whole(i); return; }
+      const made = cut(w.type, w.stone, exterior, at);
+      gathering.add(made.root);
+      for (const b of made.bodies) {
+        const a = rand(0, Math.PI * 2), r = rand(0.25, 0.6);
+        b.o.position.set(b.rest.x + Math.cos(a) * r, SLAB_TOP + 0.02, b.rest.z + Math.sin(a) * r);
+        b.o.quaternion.setFromEuler(new THREE.Euler(rand(0, 6), rand(0, 6), rand(0, 6)));
+        b.o.scale.setScalar(0.001);
+      }
+      puff(w.at, 6, 0.4, 0.15);
+      jobs.push(home(made.bodies, null, w.delay, 0.75 * pace, 0.45 * pace, () => { drop(made.root); whole(i); }));
+    });
+    // Rubble nobody needs goes to dust.
+    for (const p of free) {
+      const s0 = p.bodies.map(b => b.o.scale.x);
+      jobs.push(tween(0.5 * pace, k => {
+        if (!p.root.parent) return;
+        p.bodies.forEach((b, j) => b.o.scale.setScalar(Math.max(0.001, s0[j] * (1 - k * k))));
+        if (k === 1) drop(p.root);
+      }));
+    }
+    return Promise.all(jobs).then(() => {});
   }
 
   /** A settled chunk goes to dust: it shrinks inside a puff and leaves crumbs. */
@@ -387,7 +533,9 @@ export function createRubble(scene: THREE.Scene, sfx: Sfx) {
     // The pools live in the scene from the start, so the warm-up compile already sees them.
     warmup(): THREE.Object3D[] { return []; },
     /** Takes back the marks of moves that were undone (everything after `ply`). */
+    gather,
     heal(ply: number) {
+      for (const r of [...gathering]) drop(r); // a rebuild under way ends at once
       for (let i = piles.length - 1; i >= 0; i--) {
         if (piles[i].ply <= ply) continue;
         scene.remove(piles[i].root);

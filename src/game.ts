@@ -86,6 +86,7 @@ export function createGame(stage: Stage, engine: Engine, emit: (v: View) => void
   function status() {
     if (phase === 'over') return result()?.title ?? '';
     if (thinking) return `${SIDE[chess.turn()]} is thinking`;
+    if (chess.isCheckmate()) return 'Checkmate';
     if (chess.inCheck()) return settings.mode === 'machine' && !machineTurn() ? 'Check — your move' : `Check — ${SIDE[chess.turn()]} to move`;
     return settings.mode === 'machine' ? 'Your move' : `${SIDE[chess.turn()]} to move`;
   }
@@ -170,15 +171,21 @@ export function createGame(stage: Stage, engine: Engine, emit: (v: View) => void
     }
     // Two players at one screen: the board turns to whoever moves next.
     const facing = settings.mode === 'friend' && !chess.isGameOver() ? chess.turn() : undefined;
-    await stage.play(move, chess.history().length, facing);
+    const g = generation;
+    const ply = chess.history().length;
+    await stage.play(move, ply, facing);
     if (chess.isCheckmate()) {
-      // The mated king comes down where he stands; the conch sounds over the plaza.
+      // The mated king comes down where he stands, his army goes down with him,
+      // and the conch sounds over the plaza.
       deselect();
       stage.board.highlight({});
-      const king = kingSquare(chess.turn());
-      if (king) await stage.collapse(king, chess.history().length);
-      stage.audio.play('conch', { gain: 0.55 });
+      const loser = chess.turn();
+      const king = kingSquare(loser);
+      if (king) await stage.collapse(king, ply);
+      if (king && g === generation) await stage.board.fall(loser, king, ply);
+      if (g === generation) stage.audio.play('conch', { gain: 0.55 });
     } else if (chess.inCheck()) stage.audio.play('drum', { gain: 0.85, variant: 1 });
+    if (g !== generation) return; // left or started over while the stone was moving
     busy = false;
     if (chess.isGameOver()) { phase = 'over'; deselect(); } else reselect();
     marks();
@@ -287,12 +294,13 @@ export function createGame(stage: Stage, engine: Engine, emit: (v: View) => void
       thinking = false;
       phase = 'playing';
       busy = true;
-      stage.board.setBoard(chess.board(), 0);
+      // The last game's stone walks home and gathers itself while the camera comes round.
+      const rebuilt = stage.board.rebuild(chess.board(), 0);
       stage.board.highlight({});
       publish();
       // Play may be the very first gesture: the conch waits for the sounds to arrive.
       stage.audio.loaded?.then(() => stage.audio.play('conch', { gain: 0.5 }));
-      await stage.toGame(s.mode === 'friend' ? chess.turn() : s.side);
+      await Promise.all([rebuilt, stage.toGame(s.mode === 'friend' ? chess.turn() : s.side)]);
       busy = false;
       marks();
       publish();
@@ -357,9 +365,11 @@ export function createGame(stage: Stage, engine: Engine, emit: (v: View) => void
       publish();
     },
 
-    undo() {
+    /** Takes moves back the way they came: the stone walks back, the broken gathers itself, the floor mends. */
+    async undo() {
       if (busy || phase === 'intro' || lesson) return;
       generation++;
+      const g = generation;
       engine.stop();
       thinking = false;
       promoting = null;
@@ -368,7 +378,12 @@ export function createGame(stage: Stage, engine: Engine, emit: (v: View) => void
       for (let i = 0; i < plies; i++) chess.undo();
       phase = 'playing';
       deselect();
-      stage.board.setBoard(chess.board(), chess.history().length);
+      busy = true;
+      stage.board.highlight({});
+      publish();
+      await stage.board.rebuild(chess.board(), chess.history().length, 0.6);
+      if (g !== generation) return;
+      busy = false;
       marks();
       publish();
       if (settings.mode === 'friend') stage.face(chess.turn());
