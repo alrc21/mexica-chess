@@ -104,6 +104,11 @@ Each phase ends with before/after screenshots in `docs/evidence/`.
   `blender/pieces/maya_*.py`, a Maya limestone in `kit.py`), loaded after the
   first frame. Licences: code MIT, art CC BY-NC 4.0. Commits under the
   GitHub noreply address (history rewritten).
+- [x] **7b. Launch film.** 15 s, wide (1920×1080) and vertical (1080×1920),
+  cut from real footage: the game recorded with its own clock slowed to 0.2×
+  so no frame is dropped (180° motion blur in the edit), the rook turned in
+  Blender from raw masses to sculpt to baked stone, the game's CC0 recordings
+  for sound. The film and the posts live with the studio's files, not here.
 - [ ] **8. Next.** A real-iPhone pass; a phone download under 10 MB before
   play (phone-sized piece textures, the precinct after the first frame);
   KTX2 for VRAM (`scripts/ktx2.mjs` is ready); 2K stone on desktop.
