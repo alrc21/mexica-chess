@@ -122,6 +122,16 @@ Each phase ends with before/after screenshots in `docs/evidence/`.
   over it. `scripts/fall.mjs` shoots it all with the page clock at 0.2×
   (`docs/evidence/phase7c-*`): no long tasks, 68 fps at 1440×900@2x in the
   fall.
+- [x] **7d. Motion film.** 14 s, wide and vertical, replacing the launch
+  film's stuck-on cards with type that lives in the scene: headlines that
+  come in line by line, museum labels hung from one rail with a hairline to
+  each stone (Ocelotl, Cuauhtli, Huey Tlatoani), the struck square marked in
+  the capture red. The knight's blow, the names, the floor breaking, the
+  army falling and gathering itself, Tenochtitlan to Calakmul. Recorded with
+  the page clock at 0.2× while keeping the drawn camera per frame (so type is
+  pinned to the stone afterwards) and every sound the game played (the mix
+  is rebuilt from the game's own foley, in sync, at −14 LUFS). Scripts and
+  films live with the studio's files, not here.
 - [ ] **8. Next.** A real-iPhone pass; a phone download under 10 MB before
   play (phone-sized piece textures, the precinct after the first frame);
   KTX2 for VRAM (`scripts/ktx2.mjs` is ready); 2K stone on desktop.
