@@ -314,6 +314,25 @@ export function createGame(stage: Stage, engine: Engine, emit: (v: View) => void
       return sq ? game.square(sq) : false;
     },
 
+    /**
+     * A press that may become a drag: picks up one of your own stones (a
+     * target behind it still wins, as for a click). `fresh` when it wasn't
+     * already in hand, so letting go without moving doesn't put it down again.
+     */
+    grab(h: Hit): { square: Square; fresh: boolean } | null {
+      const sq = resolve(h);
+      if (!sq || !live() || promoting || chess.get(sq)?.color !== mine()) return null;
+      const fresh = sq !== selected;
+      if (fresh) game.square(sq);
+      return { square: sq, fresh };
+    },
+
+    /** Let go of a dragged stone over `h`: a legal square plays it there (as a second click would). */
+    drop(h: Hit): boolean {
+      const sq = resolve(h);
+      return isTarget(sq) && game.square(sq!);
+    },
+
     square(sq: Square): boolean {
       if (!live() || promoting) return false;
       const options = targets.filter(m => m.to === sq);

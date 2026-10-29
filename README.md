@@ -34,6 +34,7 @@ blender -b --factory-startup -P blender/polish.py -- king     # the minerals' ba
 node scripts/lessons.mjs        # every lesson: legal, solvable, the engine agrees
 node scripts/jank.mjs           # frame gaps, long tasks and shader compiles around clicks and captures
 node scripts/click.mjs <dir>    # real clicks on projected squares
+node scripts/drag.mjs <dir>     # drag and drop with a real pointer, and a finger
 node scripts/learn.mjs <dir>    # learn mode end to end, desktop and phone
 node scripts/smoke.mjs <dir> <url>   # a deployed build: ready time, a move, /about
 ```

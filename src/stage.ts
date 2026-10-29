@@ -120,6 +120,10 @@ export type StageEvents = {
   /** A click on the board. Return true if the game used it; otherwise, on foot, we walk there. */
   onSquare(hit: Hit): boolean;
   onHover(hit: Hit): void;
+  /** A press on one of your own stones picks it up to drag; `fresh` when it wasn't already in hand. */
+  onGrab(hit: Hit): { square: Square; fresh: boolean } | null;
+  /** Let go of a dragged stone: true if it was played where it fell; otherwise it floats back. */
+  onDrop(hit: Hit): boolean;
 };
 
 /**
@@ -633,7 +637,7 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
       renderer.shadowMap.needsUpdate = true;
       if (mode === 'intro') setView(INTRO());
     },
-    setCursor(pointer) { canvas.style.cursor = pointer ? 'pointer' : ''; },
+    setCursor(pointer) { canvas.style.cursor = grab?.dragging ? 'grabbing' : pointer ? 'pointer' : ''; },
     frame(pos, look, fov = camera.fov) {
       ++turn;
       setNear(0.02);
@@ -855,24 +859,59 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
   }
 
   // ── Pointer: a click is a press that didn't become a drag ─────────────────
-  // Orbit drags belong to OrbitControls; on foot a drag turns your head.
+  // Orbit drags belong to OrbitControls, unless the press lands on one of your
+  // own stones: then the drag carries it, and letting go plays it there. On
+  // foot a drag turns your head.
   const ndc = new THREE.Vector2();
   let down: { x: number; y: number; lx: number; ly: number; moved: number } | null = null;
   let hovered = '';
   let rush = 1;
+  let grab: { square: Square; fresh: boolean; orbit: boolean; dragging: boolean; pointer: number } | null = null;
   const toNdc = (e: PointerEvent) => {
     const r = canvas.getBoundingClientRect();
     ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
   };
   const ray = new THREE.Raycaster();
   const ground = new THREE.Plane(new THREE.Vector3(0, 1, 0), -SLAB_TOP);
+  const onBoard = new THREE.Vector3();
   const onDown = (e: PointerEvent) => {
+    if (grab) {
+      if (e.pointerId !== grab.pointer) return; // a second finger while a stone is in hand
+      // The same pointer pressing again: its release was lost. Put the stone back and start over.
+      controls.enabled = grab.orbit;
+      board?.hold(grab.square, null);
+      grab = null;
+    }
     down = { x: e.clientX, y: e.clientY, lx: e.clientX, ly: e.clientY, moved: 0 };
     if (mode === 'walk') canvas.setPointerCapture(e.pointerId);
+    if (mode === 'orbit' && board && e.button === 0) {
+      toNdc(e);
+      const g = events.onGrab(board.pick(ndc, camera));
+      // OrbitControls saw the press first; switched off, it ignores the moves and still tidies up on release.
+      // The release must reach us wherever the pointer goes: capture it ourselves.
+      if (g) {
+        grab = { ...g, orbit: controls.enabled, dragging: false, pointer: e.pointerId };
+        controls.enabled = false;
+        canvas.setPointerCapture(e.pointerId);
+      }
+    }
   };
   const onUp = (e: PointerEvent) => {
     const d = down;
     down = null;
+    if (grab) {
+      const g = grab;
+      grab = null;
+      controls.enabled = g.orbit;
+      if (g.dragging) {
+        canvas.style.cursor = '';
+        toNdc(e);
+        const played = e.type !== 'pointercancel' && !!board && events.onDrop(board.pick(ndc, camera));
+        if (!played) board?.hold(g.square, null);
+        return;
+      }
+      if (g.fresh) return; // the press picked it up: letting go is not a second click
+    }
     if (d && d.moved <= 6 && mode === 'scripted') rush = 3; // impatient: a click hurries the camera along
     if (!d || !board || (mode !== 'orbit' && mode !== 'walk')) return;
     if (d.moved > 6) return;
@@ -892,8 +931,15 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
       if (mode === 'walk' && down.moved > 4) walk.look(e.clientX - down.lx, e.clientY - down.ly);
       down.lx = e.clientX;
       down.ly = e.clientY;
+      if (grab && board && down.moved > 4) {
+        grab.dragging = true;
+        canvas.style.cursor = 'grabbing';
+        toNdc(e);
+        ray.setFromCamera(ndc, camera);
+        if (ray.ray.intersectPlane(ground, onBoard)) board.hold(grab.square, onBoard);
+      }
     }
-    if (e.pointerType !== 'mouse') return;
+    if (e.pointerType !== 'mouse' && !grab?.dragging) return; // a finger dragging a stone lights its landing too
     toNdc(e);
     hoverDirty = true;
   };

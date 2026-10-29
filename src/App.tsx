@@ -65,6 +65,8 @@ export default function App() {
       },
       onSquare: hit => game.current?.click(hit) ?? false,
       onHover: hit => game.current?.hover(hit),
+      onGrab: hit => game.current?.grab(hit) ?? null,
+      onDrop: hit => game.current?.drop(hit) ?? false,
     });
     return () => { dispose(); engine.dispose(); };
   }, []);

@@ -394,17 +394,62 @@ export function createBoard(scene: THREE.Scene, models: Models, sfx: Sfx, hooks:
     hovered = next;
   }
 
-  /** Raise the selected piece a hand's breadth; drop the previous one. */
+  /** Raise the selected piece a hand's breadth; drop the previous one (back over its square, if it was in hand). */
   function lift(sq: Square | null) {
     const next = sq ? pieces.get(sq) ?? null : null;
     for (const [o, up] of [[lifted, false], [next, true]] as const) {
       if (!o || (o === lifted && o === next)) continue;
-      const y0 = o.position.y;
-      const y1 = SLAB_TOP + (up ? LIFT : 0);
-      tween(0.22, k => { o.position.y = y0 + (y1 - y0) * easeInOut(k); });
+      if (!up && held?.o === o) letGo();
+      const from = o.position.clone();
+      const to = squarePos(o.userData.square).setY(SLAB_TOP + (up ? LIFT : 0));
+      tween(0.22, k => { o.position.lerpVectors(from, to, easeInOut(k)); });
     }
     if (next && next !== lifted) sfx('lift', next.position, 0.5);
     lifted = next;
+  }
+
+  // ── In hand: a piece dragged by the pointer floats after it, heavy, leaning back from its travel ─
+  let held: { o: THREE.Object3D; at: THREE.Vector3; base: THREE.Quaternion; axis: THREE.Vector3; tilt: number } | null = null;
+  /** Carry the piece on `sq` toward `at`, a point on the board; null floats it back over its square, still lifted. */
+  function hold(sq: Square, at: THREE.Vector3 | null) {
+    const o = pieces.get(sq);
+    if (!o) return;
+    if (!at) {
+      if (held?.o !== o) return;
+      letGo();
+      const from = o.position.clone();
+      const to = squarePos(sq).setY(SLAB_TOP + LIFT);
+      tween(0.3, k => { o.position.lerpVectors(from, to, easeInOut(k)); });
+      return;
+    }
+    if (held?.o === o) held.at.copy(at);
+    else held = { o, at: at.clone(), base: o.quaternion.clone(), axis: new THREE.Vector3(1, 0, 0), tilt: 0 };
+  }
+  function letGo() {
+    if (!held) return;
+    held.o.quaternion.copy(held.base);
+    held = null;
+  }
+  const HAND = { follow: 16, rise: 10, lean: 0.035, most: 0.12 };
+  function follow(dt: number) {
+    if (!held) return;
+    const { o, at } = held;
+    const k = Math.min(1, dt * HAND.follow);
+    const dx = (at.x - o.position.x) * k, dz = (at.z - o.position.z) * k;
+    o.position.x += dx;
+    o.position.z += dz;
+    // Over another stone it's carried above that stone's head, the way a hand would.
+    const f = Math.floor(o.position.x + 4), r = Math.floor(4 - o.position.z);
+    const under = f >= 0 && f < 8 && r >= 0 && r < 8 ? pieces.get((String.fromCharCode(97 + f) + (r + 1)) as Square) : undefined;
+    const y = under && under !== o ? under.position.y + under.userData.h + 0.03 : SLAB_TOP + HOVER;
+    o.position.y += (y - o.position.y) * Math.min(1, dt * HAND.rise);
+    // The top lags behind the hand, more the faster it goes.
+    const speed = Math.hypot(dx, dz) / Math.max(dt, 1e-3);
+    if (speed > 0.05) held.axis.set(dz, 0, -dx).normalize();
+    const want = -Math.min(HAND.most, speed * HAND.lean);
+    held.tilt += (want - held.tilt) * Math.min(1, dt * 8);
+    o.quaternion.copy(held.base).premultiply(lean.setFromAxisAngle(held.axis, held.tilt));
+    dirty = true;
   }
 
   // ── Picking: the stone you can see, then the square under it ─────────────
@@ -421,6 +466,7 @@ export function createBoard(scene: THREE.Scene, models: Models, sfx: Sfx, hooks:
     for (const h of hits) {
       let o: THREE.Object3D | null = h.object;
       while (o && !o.userData.square) o = o.parent;
+      if (o && o === held?.o) continue; // the stone in hand never hides where it's going
       if (o) { piece = o.userData.square; break; }
     }
     let ground: Square | null = null;
@@ -467,10 +513,9 @@ export function createBoard(scene: THREE.Scene, models: Models, sfx: Sfx, hooks:
   }
 
   /** The knight leaps: a high arc, a slam. `onImpact` fires as it comes down. */
-  function leap(o: THREE.Object3D, to: THREE.Vector3, dur: number, onImpact?: () => void) {
+  function leap(o: THREE.Object3D, to: THREE.Vector3, dur: number, dir: THREE.Vector3, onImpact?: () => void) {
     const from = o.position.clone();
-    const flat = new THREE.Vector3(to.x - from.x, 0, to.z - from.z).normalize();
-    const axis = up.clone().cross(flat);
+    const axis = up.clone().cross(dir);
     const base = o.quaternion.clone();
     let struck = false;
     sfx('lift', o.position, 0.7, 0.8);
@@ -505,6 +550,7 @@ export function createBoard(scene: THREE.Scene, models: Models, sfx: Sfx, hooks:
     ply = at;
     const mover = pieces.get(m.from as Square)!;
     if (lifted === mover) lifted = null;
+    if (held?.o === mover) letGo(); // dropped by hand: it moves on from where it was let go
     pieces.delete(m.from as Square);
     mover.userData.square = m.to; // a click on the stone in flight picks it up where it's going
     const victimSq = (m.flags.includes('e') ? m.to[0] + m.from[1] : m.captured ? m.to : null) as Square | null;
@@ -513,10 +559,12 @@ export function createBoard(scene: THREE.Scene, models: Models, sfx: Sfx, hooks:
 
     const to = squarePos(m.to as Square);
     const d = Math.hypot(m.to.charCodeAt(0) - m.from.charCodeAt(0), +m.to[1] - +m.from[1]);
-    const blow = new THREE.Vector3(to.x - mover.position.x, 0, to.z - mover.position.z).normalize();
+    // Along the move, square to square: a stone dropped by hand may already hang over its target.
+    const from = squarePos(m.from as Square);
+    const blow = new THREE.Vector3(to.x - from.x, 0, to.z - from.z).normalize();
     const jobs: Promise<void>[] = [];
 
-    if (m.piece === 'n') jobs.push(leap(mover, to, 0.75 + 0.05 * d, victim ? () => shatter(victim, blow, 1.25) : undefined));
+    if (m.piece === 'n') jobs.push(leap(mover, to, 0.75 + 0.05 * d, blow, victim ? () => shatter(victim, blow, 1.25) : undefined));
     else if (victim) jobs.push(strike(mover, victim, to, blow, d));
     else jobs.push(glide(mover, to, 0.45 + 0.1 * d));
 
@@ -608,6 +656,7 @@ export function createBoard(scene: THREE.Scene, models: Models, sfx: Sfx, hooks:
     highlight,
     hoverTile,
     lift,
+    hold,
     pick,
     play,
     collapse,
@@ -637,6 +686,7 @@ export function createBoard(scene: THREE.Scene, models: Models, sfx: Sfx, hooks:
       clock += dt;
       for (const t of marks.children) ((t as THREE.Mesh).material as THREE.ShaderMaterial).uniforms.uTime.value = clock;
       for (let i = effects.length - 1; i >= 0; i--) if (!effects[i](dt)) effects.splice(i, 1);
+      follow(dt);
       followContacts();
       obstacles.length = 0;
       for (const o of pieces.values()) obstacles.push({ x: o.position.x, z: o.position.z, r: 0.3, h: o.position.y + o.userData.h });
