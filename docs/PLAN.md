@@ -135,6 +135,55 @@ Each phase ends with before/after screenshots in `docs/evidence/`.
 - [ ] **8. Next.** A real-iPhone pass; a phone download under 10 MB before
   play (phone-sized piece textures, the precinct after the first frame);
   KTX2 for VRAM (`scripts/ktx2.mjs` is ready); 2K stone on desktop.
+- [x] **9a. Minerals.** The same pieces carved in precious stone
+  of the Mexica world, after a smoked-and-clear acrylic set: basalt's army
+  in obsidian (iztli, Tezcatlipoca's smoking mirror), tezontle's in jade
+  (chalchihuitl, worth more than a load of gold to the envoys Bernal Díaz
+  saw) or Chiapas amber (a true resin). Chosen in the intro — *Carved in:
+  Stone · Amber · Jade*, swapped behind the place curtain once the new
+  stone's shaders are compiled (no frame stalls in view); the armies take
+  the stone's names (Amber/Obsidian, Jade/Obsidian) and the intro its line.
+  `?stone=amber|jade` starts there. A `MeshPhysicalMaterial` with transmission lets
+  the volume carry the colour; captures break into chunks of the same
+  mineral; the contact shadow pales under jade and amber.
+  First pass, on the stone bakes (`docs/evidence/phase9a-lookdev.jpg`,
+  `scripts/lookdev.mjs`: columns stone, jade, amber; rows night, day, each
+  army backlit, the board, two captures): tezontle's normals carry vesicles
+  that polish turns into dents, so both armies took basalt's (one sculpt, one
+  set of UVs). Obsidian was the smoked glass of the reference, best backlit;
+  amber glowed backlit and far off but read as brass up close; jade read as
+  green glass (its milkiness is scattering, which transmission doesn't do).
+  **Kept: obsidian against amber** (2026-10-28, Alberto).
+  The minerals' own bake (`blender/polish.py`, 6–7 s a piece once Cycles has
+  its kernels): onto the game mesh as shipped — so the shards fit too — the
+  same cuts sculpted again without weathering (`kit.sculpt(weather=False)`)
+  and baked with no scans or vesicles: the carving a lapidary leaves; and a
+  thickness map, occlusion seen from inside over a floor of 0.35, so thin
+  edges run clear and the core holds the colour. 2.1 MB in
+  `public/textures/polish/`, loaded the first time a mineral is chosen. Thickness 0.9: at
+  1.5 amber turns to gold and obsidian to black; without the floor the fans
+  and shields go colourless. `docs/evidence/phase9a-polish.jpg`: stone, amber
+  on the stone bake, amber polished; night, day, both armies backlit.
+  Left: shadow-map shadows under amber stay opaque; the sun on flat tops
+  blooms hard; three lesson briefs say "Basalt" in any stone; the polished
+  maps arrive after the swap (pieces may lack their carving for a moment);
+  a fresh break has no thickness map, so it reads denser than the piece.
+  Cost, measured at Alberto's screen (1728×1000@2, game view, uncapped,
+  2026-10-29): it felt slow, and was — 6–17 fps at dpr 2 against stone's
+  ~63. Earlier figures (82 → 43) were taken after adaptive resolution had
+  already dropped the pixels, so they hid it. three draws the opaque scene
+  again into a canvas-sized half-float 4×MSAA target, mipmapped every
+  frame, then reads it bicubically at two mip levels (8 taps) per pixel.
+  Kept: the target at half size, and one trilinear tap instead of the
+  bicubic read (polish sits at the bottom of the mip chain). Now amber
+  settles at 43 fps with resolution down to 1.5 where stone holds 55 at 2;
+  with dpr frozen at 2, 35 against 65. Ruled out: the target's size (0.1
+  to 0.5 within noise), the far scene (hiding it changes nothing), scattered
+  reads (thickness 0 changes nothing), anisotropy, material switches. What
+  is left — ~13 ms at @2, still ~9 at @1 — barely follows the pixels:
+  ~4.5 ms for the pass, the rest per transmissive draw in three's path on
+  ANGLE/Metal. An alpha shell (tint and thickness as opacity, reflections,
+  no refraction) would cost what stone costs.
 
 ## Budgets
 
@@ -171,5 +220,7 @@ node scripts/floor.mjs <dir>    # a square struck twice: mid-break, settled, up 
 node scripts/lessons.mjs        # every lesson checked with chess.js and Stockfish
 node scripts/learn.mjs <dir>    # learn end to end: drill, a miss, progress after reload, a hunt, phone
 node scripts/about-shots.mjs    # clean frames for the About page → public/stills
+node scripts/lookdev.mjs <dir> stone jade amber   # the same frames in stone and each mineral
 blender -b --factory-startup -P blender/fracture.py -- king   # pre-fracture a piece
+blender -b --factory-startup -P blender/polish.py -- king     # the minerals' bake: polished carving + thickness
 ```
