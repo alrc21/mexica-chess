@@ -23,6 +23,7 @@ python3 blender/fetch.py                                      # CC0 scans from P
 npm run piece -- rook                                         # sculpt → retopo → bake → public/models
 blender -b --factory-startup -P blender/fracture.py -- king   # pre-fracture a piece for captures
 blender -b --factory-startup -P blender/damage.py -- 0        # broken slabs (morph target + thrown bits)
+blender -b --factory-startup -P blender/polish.py -- king     # the minerals' bake: polished carving + thickness (?stone=)
 ```
 
 `blender/kit.py` holds the shared pipeline: union the masses (voxel remesh), cut the reliefs and edge chips (booleans), soften and weather, decimate, UV, then bake colour, roughness, normal and ambient occlusion from a procedural stone built on recoloured scans. `blender/pieces/*.py` only describe shapes.

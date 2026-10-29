@@ -13,7 +13,7 @@ import { createAudio, type Audio, type Loop } from './audio';
 import { createBoard, squarePos, SLAB_TOP, type Board, type Hit, type Models } from './board';
 import { createFire, type Fire } from './fire';
 import { createJungle } from './jungle';
-import { MODEL, STONE } from './lore';
+import { MODEL, STONE, type Carving } from './lore';
 import { createWalk, type Solid } from './walk';
 
 type Stone = 'tezontle' | 'basalt' | 'cantera' | 'andesite' | 'limestone';
@@ -27,6 +27,33 @@ const GRAIN_MAP: Record<Stone, 'tezontle' | 'basalt'> = { tezontle: 'tezontle', 
 const GRAIN_STRENGTH: Record<Stone, number> = { tezontle: 0.9, cantera: 0.6, basalt: 0.35, andesite: 0.5, limestone: 0.3 };
 // Contrast for play: red reads red, the dark squares sit between black basalt and pale cantera.
 const TINT: Record<Stone, number> = { tezontle: 1.2, basalt: 1.0, cantera: 0.9, andesite: 1.45, limestone: 1.0 };
+
+/**
+ * What the pieces are carved in (phase 9a): volcanic stone, or the same pieces
+ * in minerals — basalt's army in obsidian, tezontle's in amber or jade. A
+ * polished bake keeps the carving and says how much stone each point has
+ * behind it; the volume carries the colour, clearer at thin edges than in the
+ * core. Thickness is in the mesh's own units (its node is scaled ~0.2–0.6);
+ * attenuation in board units. Chosen in the intro; ?stone=amber|jade starts there.
+ */
+type Mineral = 'obsidian' | 'jade' | 'amber';
+const STONE_PARAM = typeof location !== 'undefined' ? new URLSearchParams(location.search).get('stone') : null;
+export const FIRST_CARVING: Carving = STONE_PARAM === 'jade' || STONE_PARAM === 'amber' ? STONE_PARAM : 'stone';
+const MINERALS: Record<Mineral, THREE.MeshPhysicalMaterialParameters> = {
+  obsidian: { roughness: 0.05, ior: 1.49, attenuationColor: '#4a3a30', attenuationDistance: 0.38 },
+  // The base colour tints the light passing through too: keep it pale, let the volume carry the green.
+  jade: { color: '#eef5ee', roughness: 0.32, ior: 1.66, attenuationColor: '#5cae7c', attenuationDistance: 0.4 },
+  amber: { roughness: 0.07, ior: 1.54, attenuationColor: '#e8a540', attenuationDistance: 0.55 },
+};
+/**
+ * What shows through, read once: three filters it bicubically at two mip
+ * levels (8 half-float taps a pixel, scattered by the refraction), the bulk of
+ * each piece's cost. Polished stone sits at the bottom of the mip chain, where
+ * one trilinear tap looks the same.
+ */
+const BICUBIC = 'return textureBicubic( transmissionSamplerMap, fragCoord.xy, lod );';
+if (!THREE.ShaderChunk.transmission_pars_fragment.includes(BICUBIC)) console.warn('[stage] transmission chunk changed: minerals keep the bicubic read');
+const ONE_TAP = THREE.ShaderChunk.transmission_pars_fragment.replace(BICUBIC, 'return textureLod( transmissionSamplerMap, fragCoord.xy, lod );');
 
 function addGrain(mat: THREE.MeshStandardMaterial, map: THREE.Texture, scale: number, strength: number) {
   mat.onBeforeCompile = shader => {
@@ -79,6 +106,8 @@ export type Stage = {
   setDay(on: boolean): Promise<void>;
   /** Tenochtitlan or Calakmul: an instant swap, made behind the curtain. */
   setPlace(place: Place): void;
+  /** Stone, amber or jade: resolves once the new stone stands on the board (its shaders compiled first). */
+  setStone(carving: Carving): Promise<void>;
   setCursor(pointer: boolean): void;
   /** Where a square's centre lands on screen, in CSS pixels (used by the browser tests). */
   project(sq: Square, height?: number): { x: number; y: number };
@@ -165,6 +194,37 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
   };
   const grain = { tezontle: tile('/textures/grain-tezontle.jpg', 1), basalt: tile('/textures/grain-basalt.jpg', 1) };
   const FLAG = (m: 'diff' | 'nor' | 'rough') => `/textures/flagstone-${m}${PHONE ? '-1k' : ''}.jpg`;
+  type Bake = { normal: THREE.Texture; thick: THREE.Texture; ao: THREE.Texture | null; normalScale: THREE.Vector2 };
+  /**
+   * A piece's mineral bake (blender/polish.py): its cuts polished instead of
+   * worn, and how much stone lies behind each point. Both armies share one
+   * sculpt and one set of UVs (and the shards keep them), so one bake fits all;
+   * occlusion and the normal convention come from the stone it ships with.
+   */
+  const lend = (piece: string, mat: THREE.MeshStandardMaterial): Bake => {
+    const map = (m: 'nor' | 'thick') => {
+      const t = textures.load(`/textures/polish/${piece}-${m}.webp`);
+      t.flipY = false; // glTF's UVs
+      t.anisotropy = aniso;
+      return t;
+    };
+    return { normal: map('nor'), thick: map('thick'), ao: mat.aoMap, normalScale: mat.normalScale.clone() };
+  };
+  /** A mineral body carved by `bake`. Without one: a fresh break. */
+  const mineral = (kind: Mineral, bake?: Bake) => {
+    const mat = new THREE.MeshPhysicalMaterial({
+      transmission: 1, thickness: 0.9, specularIntensity: 1, ...MINERALS[kind],
+      normalMap: bake?.normal ?? null, thicknessMap: bake?.thick ?? null, aoMap: bake?.ao ?? null,
+    });
+    if (bake) mat.normalScale.copy(bake.normalScale);
+    mat.onBeforeCompile = s => { s.fragmentShader = s.fragmentShader.replace('#include <transmission_pars_fragment>', ONE_TAP); };
+    mat.customProgramCacheKey = () => 'one-tap';
+    return mat;
+  };
+  // ponytail: transmission costs ~13 ms a frame at 1728x1000@2 (~9 at @1) whatever the target's size, the far scene or the
+  // texture filtering: ~4.5 ms for the pass, the rest per transmissive draw. Amber settles at 43 fps @1.5 where stone holds
+  // 55 @2. Half the target is a small saving kept (stone has no transmissive draws: no pass); an alpha shell if it must run like stone
+  renderer.transmissionResolutionScale = 0.5;
 
   // ── Two places: the plaza of Tenochtitlan, and a summit above the forest of Calakmul ─
   const tenochtitlan = new THREE.Group();
@@ -238,6 +298,7 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
   let disposed = false;
   let jungleUpdate: ((t: number, mist: THREE.Color) => void) | null = null;
   let setTemples: ((m: Record<'temple0' | 'temple1' | 'acropolis', THREE.Object3D>) => void) | null = null;
+  let setCarving: ((s: Carving) => Promise<void>) | null = null;
 
   // ── Scars: a slab where a piece was destroyed is swapped for a broken one ─
   // Each square keeps a stack (intact, cracked, shattered) tagged by ply, so
@@ -562,6 +623,7 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
       mixAmbience(2.4, k1);
       await tween(2.6, k => atmo.set(k0 + (k1 - k0) * easeInOut(k)));
     },
+    setStone: s => setCarving?.(s) ?? Promise.resolve(),
     setPlace(p) {
       atmo.setPlace(p);
       tenochtitlan.visible = p === 'tenochtitlan';
@@ -688,6 +750,51 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
     const models = { w: {}, b: {} } as Models;
     (['w', 'b'] as Color[]).forEach((c, i) => kinds.forEach((k, j) => { models[c][k] = pieces[i][j]; }));
     board = createBoard(scene, models, (name, at, gain, rate) => audio.play(name, { at, gain, rate }), { impact, scar, heal });
+
+    // What each piece wears, per carving: its baked stone, or a mineral on the same bake (made the first time it's chosen).
+    const meshOf = (o: THREE.Object3D) => o.getObjectByProperty('isMesh', true) as THREE.Mesh;
+    const stoneOf = new Map<THREE.Object3D, THREE.MeshStandardMaterial>(pieces.flat().map(o => [o, meshOf(o).material as THREE.MeshStandardMaterial]));
+    const bakes = new Map<PieceSymbol, Bake>();
+    const worn = new Map<string, THREE.Material>();
+    const wear = (c: Color, k: PieceSymbol, s: Carving): THREE.Material => {
+      if (s === 'stone') return stoneOf.get(models[c][k])!;
+      const key = `${s}-${c}-${k}`;
+      if (!worn.has(key)) {
+        if (!bakes.has(k)) bakes.set(k, lend(MODEL[k], stoneOf.get(models.b[k])!));
+        worn.set(key, mineral(c === 'b' ? 'obsidian' : s, bakes.get(k)));
+      }
+      return worn.get(key)!;
+    };
+    // A fresh break: raw stone, or the mineral without its bake.
+    const breaks: Partial<Record<Carving, Record<'tezontle' | 'basalt', THREE.Material>>> = {};
+    const breakOf = (s: Carving) => breaks[s] ??= s === 'stone' ? {
+      tezontle: new THREE.MeshStandardMaterial({ color: '#4f2218', roughness: 1, normalMap: grain.tezontle, normalScale: new THREE.Vector2(1.4, 1.4) }),
+      basalt: new THREE.MeshStandardMaterial({ color: '#24221f', roughness: 0.88, normalMap: grain.basalt, normalScale: new THREE.Vector2(1, 1) }),
+    } : { tezontle: mineral(s), basalt: mineral('obsidian') };
+    let carving: Carving = 'stone';
+    let shardSet: Record<PieceSymbol, THREE.Object3D> | null = null;
+    const carveIn = (s: Carving) => {
+      carving = s;
+      for (const c of ['w', 'b'] as Color[]) for (const k of kinds) {
+        meshOf(models[c][k]).material = wear(c, k, s);
+        models[c][k].userData.contact = s !== 'stone' && c === 'w' ? 0.45 : undefined; // light gets under amber and jade
+      }
+      board!.redress();
+      if (shardSet) board!.setShards(shardSet, breakOf(s));
+      renderer.shadowMap.needsUpdate = true;
+    };
+    setCarving = async s => {
+      if (s === carving) return;
+      // The new programs compile off-screen first, so the swap itself costs no frame.
+      const samples = (['w', 'b'] as Color[]).flatMap(c => kinds.map(k => new THREE.Mesh(meshOf(models[c][k]).geometry, wear(c, k, s))));
+      for (const m of samples) m.position.y = -5;
+      scene.add(...samples);
+      await inComposer(() => renderer.compileAsync(scene, camera));
+      scene.remove(...samples);
+      if (!disposed) carveIn(s);
+    };
+    if (FIRST_CARVING !== 'stone') carveIn(FIRST_CARVING);
+
     // Compile every shader now, behind the curtain, not on the first click.
     const warm = board.warmup();
     scene.add(...warm);
@@ -698,14 +805,11 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
     events.onReady(stage);
 
     // The fractured pieces come after the first frame: nobody captures in the first seconds.
-    const interior = {
-      tezontle: new THREE.MeshStandardMaterial({ color: '#4f2218', roughness: 1, normalMap: grain.tezontle, normalScale: new THREE.Vector2(1.4, 1.4) }),
-      basalt: new THREE.MeshStandardMaterial({ color: '#24221f', roughness: 0.88, normalMap: grain.basalt, normalScale: new THREE.Vector2(1, 1) }),
-    };
     const shards = {} as Record<PieceSymbol, THREE.Object3D>;
     await Promise.all(kinds.map(async k => { shards[k] = (await gltf.loadAsync(`/models/shards/${MODEL[k]}.glb`)).scene; }));
     if (disposed) return;
-    board.setShards(shards, interior);
+    shardSet = shards;
+    board.setShards(shards, breakOf(carving));
     // Broken slabs (blender/damage.py): cracked and shattered, per variant. Missing files just mean no scars.
     // Fresh cuts: pale at the lip, into shadow with depth (vertex colour baked by damage.py).
     interiorOf.cantera = new THREE.MeshStandardMaterial({ color: '#c4b498', roughness: 0.95, normalMap: grain.tezontle, normalScale: new THREE.Vector2(0.8, 0.8), vertexColors: true });
@@ -716,7 +820,7 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
     // Warm their programs (and instanced grit, and a broken slab) without blocking a frame.
     const sample = shards.p.clone();
     const pieceMat = (pieces[0][0].getObjectByProperty('isMesh', true) as THREE.Mesh).material as THREE.Material;
-    sample.traverse(o => { const m = o as THREE.Mesh; if (m.isMesh) m.material = (m.material as THREE.Material).name === 'interior' ? interior.tezontle : pieceMat; });
+    sample.traverse(o => { const m = o as THREE.Mesh; if (m.isMesh) m.material = (m.material as THREE.Material).name === 'interior' ? breakOf(carving).tezontle : pieceMat; });
     const grit = new THREE.InstancedMesh(new THREE.DodecahedronGeometry(1, 0), pieceMat, 1);
     const samples: THREE.Object3D[] = [sample, grit];
     for (const stone of ['cantera', 'andesite'] as const) {

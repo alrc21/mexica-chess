@@ -458,7 +458,8 @@ def noise_tex(kind, size, depth=2):
     return t
 
 
-def sculpt(solids, cutters, protect=(), seed=7, voxel=0.0022):
+def sculpt(solids, cutters, protect=(), seed=7, voxel=0.0022, weather=True):
+    """weather=False: the same cuts, polished instead of worn (polish.py)."""
     rng = random.Random(seed)
     cutters = cutters + chips(rng, protect)
     hi = join(solids, "hi")
@@ -479,7 +480,7 @@ def sculpt(solids, cutters, protect=(), seed=7, voxel=0.0022):
 
     m = hi.modifiers.new("soften", "REMESH")  # rounds every cut a little, like worn stone
     m.mode, m.voxel_size = "VOXEL", voxel
-    for kind, size, strength in (("CLOUDS", 0.22, 0.006), ("CLOUDS", 0.05, 0.0016)):
+    for kind, size, strength in (("CLOUDS", 0.22, 0.006), ("CLOUDS", 0.05, 0.0016)) if weather else ():
         d = hi.modifiers.new(kind, "DISPLACE")
         d.texture, d.texture_coords, d.strength = noise_tex(kind, size), "LOCAL", strength
     apply_modifiers(hi)

@@ -13,4 +13,13 @@ export const LORE: Record<PieceSymbol, { name: string; role: string }> = {
 };
 
 export const STONE: Record<Color, 'tezontle' | 'basalt'> = { w: 'tezontle', b: 'basalt' };
-export const SIDE: Record<Color, string> = { w: 'Tezontle', b: 'Basalt' };
+
+/** What the pieces are carved in: the volcanic stone, or the minerals (phase 9a). */
+export type Carving = 'stone' | 'amber' | 'jade';
+export const CARVING: Record<Carving, { label: string; sides: Record<Color, string>; line: string }> = {
+  stone: { label: 'Stone', sides: { w: 'Tezontle', b: 'Basalt' }, line: 'Chess carved in volcanic stone. Red tezontle against black basalt,' },
+  amber: { label: 'Amber', sides: { w: 'Amber', b: 'Obsidian' }, line: 'Chess carved in resin and volcanic glass. Honey amber against smoked obsidian,' },
+  jade: { label: 'Jade', sides: { w: 'Jade', b: 'Obsidian' }, line: 'Chess carved in jade and volcanic glass. Green jade against smoked obsidian,' },
+};
+/** The armies' names in play; they follow the carving. */
+export const SIDE: Record<Color, string> = { ...CARVING.stone.sides };

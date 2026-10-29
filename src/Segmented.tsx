@@ -33,7 +33,7 @@ export default function Segmented({ label, options, index, onSelect, tone = 'dar
     document.fonts?.ready.then(measure);
     window.addEventListener('resize', measure);
     return () => window.removeEventListener('resize', measure);
-  }, [index, options.length]);
+  }, [index, options.join('|')]); // renamed options change width too
 
   return (
     <div className="flex items-center gap-3 max-w-full">

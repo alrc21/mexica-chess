@@ -4,10 +4,10 @@ import { createEngine, type Level } from './engine';
 import { createGame, type Game, type Settings, type View } from './game';
 import Learn, { Beans } from './Learn';
 import { CHAPTERS, LESSONS, type Lesson } from './lessons';
-import { LORE } from './lore';
+import { CARVING, LORE, SIDE, type Carving } from './lore';
 import { loadProgress, recordSolve } from './progress';
 import Segmented from './Segmented';
-import { createStage, type Stage } from './stage';
+import { createStage, FIRST_CARVING, type Stage } from './stage';
 import type { Place } from './atmosphere';
 
 const EASE = 'cubic-bezier(.16,1,.3,1)';
@@ -16,6 +16,8 @@ const MODES = ['machine', 'friend'] as const;
 const LEVELS: Level[] = ['easy', 'medium', 'hard'];
 const CROWNS: PieceSymbol[] = ['q', 'r', 'b', 'n'];
 const PLACES: Place[] = ['tenochtitlan', 'calakmul'];
+const CARVINGS = Object.keys(CARVING) as Carving[];
+Object.assign(SIDE, CARVING[FIRST_CARVING].sides); // ?stone= starts in a mineral
 const WHERE: Record<Place, { label: string; line: string }> = {
   tenochtitlan: { label: 'Templo Mayor, Tenochtitlan', line: 'on the plaza of Tenochtitlan.' },
   calakmul: { label: 'Calakmul, Campeche', line: 'on a temple above the forest of Calakmul.' },
@@ -46,7 +48,8 @@ export default function App() {
   const [muted, setMuted] = useState(false);
   const [hint, setHint] = useState(false);
   const [place, setPlace] = useState<Place>('tenochtitlan');
-  const [veiled, setVeiled] = useState(false); // a short curtain while the place changes
+  const [carving, setCarving] = useState<Carving>(FIRST_CARVING);
+  const [veiled, setVeiled] = useState(false); // a short curtain while the place or the stone changes
   const [learning, setLearning] = useState(false); // the lessons sheet is open
   const [progress, setProgress] = useState(loadProgress);
 
@@ -108,6 +111,14 @@ export default function App() {
     setPlace(p);
     setVeiled(true);
     setTimeout(() => { stage.current?.setPlace(p); setTimeout(() => setVeiled(false), 120); }, 650);
+  };
+  // So does the stone; the curtain waits for the new one's shaders. The armies take its names.
+  const changeCarving = (c: Carving) => {
+    if (c === carving || veiled || !stage.current) return;
+    setCarving(c);
+    Object.assign(SIDE, CARVING[c].sides);
+    setVeiled(true);
+    setTimeout(async () => { await stage.current?.setStone(c); setTimeout(() => setVeiled(false), 120); }, 650);
   };
   const leave = () => { setWalking(false); setHint(false); setLearning(false); g?.toIntro(); };
   const study = (l: Lesson) => { setLearning(false); setWalking(false); setHint(false); g?.lesson(l); };
@@ -172,10 +183,12 @@ export default function App() {
           <h1 className="font-display text-[52px] font-light leading-[0.95] tracking-[-0.03em] md:text-[92px]"
             style={{ textShadow: `0 2px 40px rgba(${veil},0.85)` }}>Mexica Chess</h1>
           <p className="mt-4 max-w-[36ch] text-[16px] leading-[1.5] text-soft md:text-[17px]">
-            Chess carved in volcanic stone. Red tezontle against black basalt, {WHERE[place].line}
+            {CARVING[carving].line} {WHERE[place].line}
           </p>
           <div className="mt-7 flex flex-col gap-2.5">
-            <Segmented label="You play" labelWidth="5.5rem" tone={tone} options={['Tezontle', 'Basalt']}
+            <Segmented label="Carved in" labelWidth="5.5rem" tone={tone} options={CARVINGS.map(c => CARVING[c].label)}
+              index={CARVINGS.indexOf(carving)} onSelect={i => changeCarving(CARVINGS[i])} />
+            <Segmented label="You play" labelWidth="5.5rem" tone={tone} options={[CARVING[carving].sides.w, CARVING[carving].sides.b]}
               index={SIDES.indexOf(settings.side)} onSelect={i => setSettings(s => ({ ...s, side: SIDES[i] }))} />
             <Segmented label="Against" labelWidth="5.5rem" tone={tone} options={['The machine', 'A friend']}
               index={MODES.indexOf(settings.mode)} onSelect={i => setSettings(s => ({ ...s, mode: MODES[i] }))} />

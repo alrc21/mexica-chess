@@ -139,9 +139,10 @@ export function createBoard(scene: THREE.Scene, models: Models, sfx: Sfx, hooks:
   const contacts = new Map<THREE.Object3D, THREE.Mesh>();
   const contactGroup = new THREE.Group();
   scene.add(contactGroup);
-  function contact(o: THREE.Object3D) {
+  function contact(o: THREE.Object3D, dark: number) {
     const m = new THREE.Mesh(CONTACT_GEO, contactMaterial());
     m.renderOrder = 1;
+    m.userData.dark = dark;
     contactGroup.add(m);
     contacts.set(o, m);
   }
@@ -156,7 +157,7 @@ export function createBoard(scene: THREE.Scene, models: Models, sfx: Sfx, hooks:
       const h = Math.max(0, o.position.y - SLAB_TOP);
       m.position.set(o.position.x, SLAB_TOP + 0.004, o.position.z);
       m.scale.setScalar(o.scale.x * (1 + h * 1.8));
-      (m.material as THREE.MeshBasicMaterial).opacity = CONTACT_DARK * THREE.MathUtils.clamp(1 - h * 2.4, 0.18, 1);
+      (m.material as THREE.MeshBasicMaterial).opacity = CONTACT_DARK * m.userData.dark * THREE.MathUtils.clamp(1 - h * 2.4, 0.18, 1);
     }
   }
 
@@ -170,7 +171,7 @@ export function createBoard(scene: THREE.Scene, models: Models, sfx: Sfx, hooks:
     o.userData = { square: sq, color, type, h: heights.get(src) };
     group.add(o);
     pieces.set(sq, o);
-    contact(o);
+    contact(o, src.userData.contact ?? 1); // translucent stone lets light in under itself
     return o;
   }
 
@@ -612,6 +613,17 @@ export function createBoard(scene: THREE.Scene, models: Models, sfx: Sfx, hooks:
     collapse,
     setShards: rubble.setShards,
     setEdge: rubble.setEdge,
+    /** The models changed what they're carved in: the standing pieces (and their shadows) follow. */
+    redress() {
+      for (const o of pieces.values()) {
+        const src = models[o.userData.color as Color][o.userData.type as PieceSymbol];
+        const mat = (src.getObjectByProperty('isMesh', true) as THREE.Mesh).material;
+        o.traverse(c => { if ((c as THREE.Mesh).isMesh) (c as THREE.Mesh).material = mat; });
+        const shadow = contacts.get(o);
+        if (shadow) shadow.userData.dark = src.userData.contact ?? 1;
+      }
+      dirty = true;
+    },
     /** Footprints the walker can't pass through. */
     solids: () => [...pieces.values()].map(o => ({ x: o.position.x, z: o.position.z, r: 0.36 })),
     setDustColor: rubble.setDustColor,
