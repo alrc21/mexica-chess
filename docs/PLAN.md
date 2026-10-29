@@ -184,6 +184,22 @@ Each phase ends with before/after screenshots in `docs/evidence/`.
   ~4.5 ms for the pass, the rest per transmissive draw in three's path on
   ANGLE/Metal. An alpha shell (tint and thickness as opacity, reflections,
   no refraction) would cost what stone costs.
+- [x] **9b. Drag and drop.** A press on one of your own stones picks it up
+  and shows its moves; the drag carries it, floating after the pointer with
+  weight (it trails and its top leans back from the travel), lifted over the
+  head of any stone it passes, the square it would land on lit. Letting go
+  on a legal square plays it from where it was let go — a capture rears back
+  and lunges from over the victim (the blow now runs square to square, so a
+  stone hanging over its target has a direction); anywhere else it floats
+  back over its square, still in hand. Clicks are untouched: a press that
+  doesn't travel is a click, and the press that picked a stone up isn't
+  also a second click that puts it down. While a stone is carried the
+  camera holds (OrbitControls switched off for that press, back on release);
+  touch works the same; on foot a drag still turns your head. Anything that
+  puts a stone down (a wrong move in a lesson, undo) floats it home.
+  `scripts/drag.mjs`: a pawn each way, an illegal drop then a click, a
+  capture dropped on the victim, the camera still while carrying, a finger
+  on a phone — all pass; `click.mjs`, `learn.mjs` and `jank.mjs` unchanged.
 
 ## Budgets
 
@@ -210,6 +226,7 @@ npm run piece -- rook           # Blender bake → public/models (SHIP_ONLY=1 sk
 npm run dev                     # http://localhost:3100
 node scripts/shoot.mjs <dir> http://localhost:3100 /   # desktop + mobile shots
 node scripts/click.mjs <dir>    # real clicks on projected squares (picking)
+node scripts/drag.mjs <dir>     # drag and drop: by hand, an illegal drop, a capture, a finger on a phone
 node scripts/drama.mjs <dir>    # capture + mate, shot as a strip
 node scripts/views.mjs <dir>    # intro/board by day, on foot by day and night
 node scripts/fps.mjs            # uncapped fps: intro, game, on foot, day, Calakmul
