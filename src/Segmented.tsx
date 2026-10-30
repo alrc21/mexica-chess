@@ -29,10 +29,10 @@ export default function Segmented({ label, options, index, onSelect, tone = 'dar
       if (el) setPill({ x: el.offsetLeft, w: el.offsetWidth });
     };
     measure();
-    // Webfonts change option widths once they land.
-    document.fonts?.ready.then(measure);
-    window.addEventListener('resize', measure);
-    return () => window.removeEventListener('resize', measure);
+    // Again whenever the track changes size: webfonts landing, or shown after being folded away.
+    const watch = new ResizeObserver(measure);
+    watch.observe(track.current!);
+    return () => watch.disconnect();
   }, [index, options.join('|')]); // renamed options change width too
 
   return (

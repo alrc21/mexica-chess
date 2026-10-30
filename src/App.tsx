@@ -24,6 +24,7 @@ const WHERE: Record<Place, { label: string; line: string }> = {
   tenochtitlan: { label: 'Templo Mayor, Tenochtitlan', line: 'on the plaza of Tenochtitlan.' },
   calakmul: { label: 'Calakmul, Campeche', line: 'on a temple above the forest of Calakmul.' },
 };
+type Step = 'carved' | 'side' | 'against' | 'level' | 'place' | 'hour';
 const TOUCH = typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches;
 
 const fade = (on: boolean, ms = 900): CSSProperties => ({
@@ -53,6 +54,7 @@ export default function App() {
   const [carving, setCarving] = useState<Carving>(FIRST_CARVING);
   const [veiled, setVeiled] = useState(false); // a short curtain while the place or the stone changes
   const [learning, setLearning] = useState(false); // the lessons sheet is open
+  const [step, setStep] = useState<Step | null>(null); // phones: the intro's choices, one at a time (null: folded)
   const [progress, setProgress] = useState(loadProgress);
   const [loaded, setLoaded] = useState(0); // what the stone has fetched so far, 0–1
   const [lifted, setLifted] = useState(false); // the loader has stepped aside
@@ -103,6 +105,17 @@ export default function App() {
   const following = lessonIndex >= 0 ? LESSONS[lessonIndex + 1] ?? null : null;
   const ls = view?.lesson;
   const tone = day ? 'light' : 'dark';
+  const [where, region] = WHERE[place].label.split(', ');
+  // The choices in order; a friend needs no level.
+  const stepsFor = (mode = settings.mode): Step[] => ['carved', 'side', 'against', ...(mode === 'machine' ? ['level' as const] : []), 'place', 'hour'];
+  const steps = stepsFor();
+  // A pick moves on to the next choice once its pill has landed; after the last, the line folds again.
+  const next = (from: Step, mode = settings.mode) => setTimeout(() => setStep(s => {
+    if (s !== from) return s;
+    const order = stepsFor(mode);
+    return order[order.indexOf(from) + 1] ?? null;
+  }), 420);
+  const row = (s: Step) => (s === step ? 'mc-in' : 'max-md:hidden');
   const veil = day ? '236,230,218' : '11,10,8';
 
   const changeHour = async (on: boolean) => {
@@ -173,8 +186,8 @@ export default function App() {
             aria-label="Mexica Chess" className="transition-opacity duration-300 hover:opacity-60">
             <svg aria-hidden viewBox={WORDMARK.viewBox} className="block w-[150px] md:w-[180px]"><path d={WORDMARK.d} fill="currentColor" /></svg>
           </button>
-          <span className="font-mono text-[11px] uppercase tracking-[0.12em] text-soft" style={fade(intro)}>
-            {WHERE[place].label}
+          <span className="whitespace-nowrap font-mono text-[11px] uppercase tracking-[0.12em] text-soft" style={fade(intro)}>
+            {where}<span className="max-md:hidden">, {region}</span>
           </span>
           <nav className="absolute right-5 top-[max(1.25rem,env(safe-area-inset-top))] flex gap-5 text-[14px] md:right-8 md:gap-7" style={fade(!!playing)}>
             <button type="button" onClick={() => g?.undo()} disabled={!view?.canUndo}
@@ -205,21 +218,41 @@ export default function App() {
           <p className="mt-6 max-w-[36ch] text-[16px] leading-[1.5] text-soft md:text-[17px]">
             {CARVING[carving].line} {WHERE[place].line}
           </p>
-          <div className="mt-7 flex flex-col gap-2.5">
-            <Segmented label="Carved in" labelWidth="5.5rem" tone={tone} options={CARVINGS.map(c => CARVING[c].label)}
-              index={CARVINGS.indexOf(carving)} onSelect={i => changeCarving(CARVINGS[i])} />
-            <Segmented label="You play" labelWidth="5.5rem" tone={tone} options={[CARVING[carving].sides.w, CARVING[carving].sides.b]}
-              index={SIDES.indexOf(settings.side)} onSelect={i => setSettings(s => ({ ...s, side: SIDES[i] }))} />
-            <Segmented label="Against" labelWidth="5.5rem" tone={tone} options={['The machine', 'A friend']}
-              index={MODES.indexOf(settings.mode)} onSelect={i => setSettings(s => ({ ...s, mode: MODES[i] }))} />
-            <div style={{ opacity: settings.mode === 'machine' ? 1 : 0.3, transition: `opacity 400ms ${EASE}` }}>
-              <Segmented label="Level" labelWidth="5.5rem" tone={tone} options={['Easy', 'Medium', 'Hard']}
-                index={LEVELS.indexOf(settings.level)} onSelect={i => setSettings(s => ({ ...s, level: LEVELS[i] }))} />
+          {/* Phones: the choices fold into one line; opened, they come one at a time, each pick bringing the next. */}
+          <button type="button" onClick={() => setStep(s => (s === null ? 'carved' : null))} aria-expanded={step !== null}
+            className="mt-6 flex w-full items-baseline justify-between gap-4 border-t border-line pt-3 font-mono text-[11px] uppercase tracking-[0.12em] md:hidden">
+            <span className="truncate text-soft">
+              {step === null
+                ? `${CARVING[carving].label} · ${SIDE[settings.side]} · ${settings.mode === 'machine' ? settings.level : 'A friend'} · ${day ? 'Day' : 'Night'}`
+                : `${steps.indexOf(step) + 1} / ${steps.length}`}
+            </span>
+            <span>{step === null ? 'Change' : 'Done'}</span>
+          </button>
+          <div className={`mt-5 flex-col gap-2.5 md:mt-7 md:flex ${step === null ? 'hidden' : 'flex'}`}>
+            <div className={row('carved')}>
+              <Segmented label="Carved in" labelWidth="5.5rem" tone={tone} options={CARVINGS.map(c => CARVING[c].label)}
+                index={CARVINGS.indexOf(carving)} onSelect={i => { changeCarving(CARVINGS[i]); next('carved'); }} />
             </div>
-            <Segmented label="Place" labelWidth="5.5rem" tone={tone} options={['Tenochtitlan', 'Calakmul']}
-              index={PLACES.indexOf(place)} onSelect={i => changePlace(PLACES[i])} />
-            <Segmented label="Hour" labelWidth="5.5rem" tone={tone} options={['Night', 'Day']}
-              index={day ? 1 : 0} onSelect={i => changeHour(i === 1)} />
+            <div className={row('side')}>
+              <Segmented label="You play" labelWidth="5.5rem" tone={tone} options={[CARVING[carving].sides.w, CARVING[carving].sides.b]}
+                index={SIDES.indexOf(settings.side)} onSelect={i => { setSettings(s => ({ ...s, side: SIDES[i] })); next('side'); }} />
+            </div>
+            <div className={row('against')}>
+              <Segmented label="Against" labelWidth="5.5rem" tone={tone} options={['The machine', 'A friend']}
+                index={MODES.indexOf(settings.mode)} onSelect={i => { setSettings(s => ({ ...s, mode: MODES[i] })); next('against', MODES[i]); }} />
+            </div>
+            <div className={row('level')} style={{ opacity: settings.mode === 'machine' ? 1 : 0.3, transition: `opacity 400ms ${EASE}` }}>
+              <Segmented label="Level" labelWidth="5.5rem" tone={tone} options={['Easy', 'Medium', 'Hard']}
+                index={LEVELS.indexOf(settings.level)} onSelect={i => { setSettings(s => ({ ...s, level: LEVELS[i] })); next('level'); }} />
+            </div>
+            <div className={row('place')}>
+              <Segmented label="Place" labelWidth="5.5rem" tone={tone} options={['Tenochtitlan', 'Calakmul']}
+                index={PLACES.indexOf(place)} onSelect={i => { changePlace(PLACES[i]); next('place'); }} />
+            </div>
+            <div className={row('hour')}>
+              <Segmented label="Hour" labelWidth="5.5rem" tone={tone} options={['Night', 'Day']}
+                index={day ? 1 : 0} onSelect={i => { changeHour(i === 1); next('hour'); }} />
+            </div>
           </div>
           <div className="mt-8 flex items-center gap-3">
             <button type="button" onClick={() => g?.start(settings)}
