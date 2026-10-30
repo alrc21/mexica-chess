@@ -116,6 +116,8 @@ export type Stage = {
 };
 
 export type StageEvents = {
+  /** How much of what has been asked for has arrived (models, textures), 0–1; the total grows as loads begin. */
+  onProgress?(loaded: number): void;
   onReady(stage: Stage): void;
   /** A click on the board. Return true if the game used it; otherwise, on foot, we walk there. */
   onSquare(hit: Hit): boolean;
@@ -186,6 +188,8 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
   addEventListener('keydown', unlock);
 
   // ── Textures ──────────────────────────────────────────────────────────────
+  // Every texture and model goes through the default manager: that is the loader's progress.
+  THREE.DefaultLoadingManager.onProgress = (_url, loaded, total) => events.onProgress?.(loaded / total);
   const textures = new THREE.TextureLoader();
   const aniso = renderer.capabilities.getMaxAnisotropy();
   const tile = (url: string, repeat: number, color = false) => {

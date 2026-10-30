@@ -3,6 +3,8 @@ import type { PieceSymbol } from 'chess.js';
 import { createEngine, type Level } from './engine';
 import { createGame, type Game, type Settings, type View } from './game';
 import Learn, { Beans } from './Learn';
+import Loader from './Loader';
+import { WORDMARK } from './marks';
 import { CHAPTERS, LESSONS, type Lesson } from './lessons';
 import { CARVING, LORE, SIDE, type Carving } from './lore';
 import { loadProgress, recordSolve } from './progress';
@@ -52,10 +54,14 @@ export default function App() {
   const [veiled, setVeiled] = useState(false); // a short curtain while the place or the stone changes
   const [learning, setLearning] = useState(false); // the lessons sheet is open
   const [progress, setProgress] = useState(loadProgress);
+  const [loaded, setLoaded] = useState(0); // what the stone has fetched so far, 0–1
+  const [lifted, setLifted] = useState(false); // the loader has stepped aside
+  const [gone, setGone] = useState(false); // …and, faded out, left the page
 
   useEffect(() => {
     const engine = createEngine();
     const dispose = createStage(canvas.current!, {
+      onProgress: k => setLoaded(p => Math.max(p, k)),
       onReady: s => {
         stage.current = s;
         setMuted(s.audio.muted);
@@ -72,6 +78,14 @@ export default function App() {
   }, []);
 
   useEffect(() => { document.documentElement.dataset.theme = day ? 'day' : 'night'; }, [day]);
+  // The temple stands complete for a breath before the curtain lifts.
+  const ready = !!view;
+  useEffect(() => {
+    if (!ready) return;
+    const t = setTimeout(() => setLifted(true), 700);
+    const u = setTimeout(() => setGone(true), 700 + 1700);
+    return () => { clearTimeout(t); clearTimeout(u); };
+  }, [ready]);
   // A solved lesson is written into this browser's progress (the best cacao is kept).
   const solvedId = view?.lesson?.solved != null ? view.lesson.id : null;
   const solvedCacao = view?.lesson?.solved ?? null;
@@ -151,12 +165,13 @@ export default function App() {
       {/* Curtain: lifts once the stone has loaded and compiled. */}
       <div aria-hidden className="pointer-events-none fixed inset-0 z-50 bg-[#0b0a08]"
         style={{ opacity: view && !veiled ? 0 : 1, transition: `opacity ${veiled ? 600 : 1600}ms ${EASE}` }} />
+      {!gone && <Loader stage={view ? 7 : 1 + Math.min(5, Math.floor(loaded * 6))} shown={!lifted} sides={`${SIDE.w} · ${SIDE.b}`} />}
 
       <div className="pointer-events-none fixed inset-0 z-40 text-ink">
         <header className="absolute inset-x-0 top-0 flex items-start justify-between gap-6 px-5 pt-[max(1.25rem,env(safe-area-inset-top))] md:px-8">
           <button type="button" onClick={leave} style={fade(!!playing || inLesson)}
-            className="font-display text-[17px] tracking-[-0.01em] transition-opacity duration-300 hover:opacity-60">
-            Mexica Chess
+            aria-label="Mexica Chess" className="transition-opacity duration-300 hover:opacity-60">
+            <svg aria-hidden viewBox={WORDMARK.viewBox} className="block w-[150px] md:w-[180px]"><path d={WORDMARK.d} fill="currentColor" /></svg>
           </button>
           <span className="font-mono text-[11px] uppercase tracking-[0.12em] text-soft" style={fade(intro)}>
             {WHERE[place].label}
@@ -182,9 +197,12 @@ export default function App() {
 
         {/* ── Intro ─────────────────────────────────────────────────────── */}
         <section className="absolute bottom-0 left-0 w-full max-w-[640px] px-5 pb-[max(1.5rem,env(safe-area-inset-bottom))] md:px-8 md:pb-10" style={fade(intro, 1200)}>
-          <h1 className="font-display text-[52px] font-light leading-[0.95] tracking-[-0.03em] md:text-[92px]"
-            style={{ textShadow: `0 2px 40px rgba(${veil},0.85)` }}>Mexica Chess</h1>
-          <p className="mt-4 max-w-[36ch] text-[16px] leading-[1.5] text-soft md:text-[17px]">
+          <h1 style={{ filter: `drop-shadow(0 2px 28px rgba(${veil},0.85))` }}>
+            <svg role="img" aria-label="Mexica Chess" viewBox={WORDMARK.viewBox} className="block w-full max-w-[560px]">
+              <path d={WORDMARK.d} fill="currentColor" />
+            </svg>
+          </h1>
+          <p className="mt-6 max-w-[36ch] text-[16px] leading-[1.5] text-soft md:text-[17px]">
             {CARVING[carving].line} {WHERE[place].line}
           </p>
           <div className="mt-7 flex flex-col gap-2.5">
