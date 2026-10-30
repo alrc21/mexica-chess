@@ -219,6 +219,18 @@ Each phase ends with before/after screenshots in `docs/evidence/`.
   `jank.mjs` p95 16.8 ms. Open: a simplified mark for the favicon (below
   ~40 px the slot and doors close), the About page, the phone intro block
   over the temple.
+- [x] **9d. The brand through the interface.** On a phone the intro's six
+  choices covered the temple; now they fold into one line (stone · side ·
+  level · hour — Change) and, opened, come one at a time, each pick
+  bringing the next once its pill lands (a friend skips the level), the
+  line folding again after the last with Play beneath — Alberto asked for
+  it this minimal. The desktop keeps every choice in view. `Segmented`
+  re-measures on a ResizeObserver, so its pill is right after display:none.
+  Favicon: the mark redrawn for a 32 grid (three terraces, the stair, two
+  shrines without doors), legible at 16 px. About: the wordmark in its
+  header, and *02 · The mark* with the identity and glyph plates (sections
+  renumbered to 08). `scripts/steps.mjs` walks the phone setup with real
+  taps; drag, click, learn, play and jank unchanged.
 
 ## Budgets
 
@@ -246,6 +258,7 @@ npm run dev                     # http://localhost:3100
 node scripts/shoot.mjs <dir> http://localhost:3100 /   # desktop + mobile shots
 node scripts/click.mjs <dir>    # real clicks on projected squares (picking)
 node scripts/drag.mjs <dir>     # drag and drop: by hand, an illegal drop, a capture, a finger on a phone
+node scripts/steps.mjs <dir>    # the phone intro: choices folded, opened one at a time by tapping
 node scripts/drama.mjs <dir>    # capture + mate, shot as a strip
 node scripts/views.mjs <dir>    # intro/board by day, on foot by day and night
 node scripts/fps.mjs            # uncapped fps: intro, game, on foot, day, Calakmul
