@@ -200,6 +200,25 @@ Each phase ends with before/after screenshots in `docs/evidence/`.
   `scripts/drag.mjs`: a pawn each way, an illegal drop then a click, a
   capture dropped on the victim, the camera still while carrying, a finger
   on a phone — all pass; `click.mjs`, `learn.mjs` and `jank.mjs` unchanged.
+- [x] **9c. Identity and loader.** Designed in Figma, *Mexica Chess — Brand
+  & Loader* (figma.com/design/GldeOVybFtnT9yo36nKEuF): the six pieces as
+  pictograms on a 24-unit grid, one plinth under every piece, the head
+  telling them apart; the mark is Teocalli, the Templo Mayor's twin shrines
+  split by the stair. Wordmark: Panchang Medium caps (Fontshare), in
+  outline — the ITF Free Font License allows wordmarks and self-hosting
+  but not the font file in a public repo, so `src/marks.ts` ships paths
+  only. Stones named in Nahuatl: itztli, tezontli, apozonalli, chalchihuitl,
+  tenextli. The loader (`src/Loader.tsx`) is the curtain: the temple rises
+  in seven stages as the real one was rebuilt seven times, what is still to
+  come drawn as a plan line; I–VI follow THREE.DefaultLoadingManager (every
+  model and texture goes through it), VII waits for the compiled shaders,
+  holds 0.7 s, dissolves into the intro and unmounts. The wordmark also
+  titles the intro and the game header; `index.html` paints dark before
+  the stylesheet. At 4 Mbps (dev): stages I–VI 4.2→6.4 s, VII at 8.4 s;
+  bundle 295 KB gz. `drag.mjs` 9/9, `click.mjs` clean, `learn.mjs` 14/14,
+  `jank.mjs` p95 16.8 ms. Open: a simplified mark for the favicon (below
+  ~40 px the slot and doors close), the About page, the phone intro block
+  over the temple.
 
 ## Budgets
 
