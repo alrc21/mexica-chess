@@ -262,7 +262,7 @@ export function createRubble(scene: THREE.Scene, sfx: Sfx) {
 
     // Grit: small stones of the same material, one draw call — room for the crumbs to come.
     const n = soft ? 20 : 44;
-    const grit = new THREE.InstancedMesh(GRIT, exterior ?? new THREE.MeshStandardMaterial(), n + bodies.length * CRUMBS);
+    const grit = new THREE.InstancedMesh(GRIT, interior[stone] ?? exterior ?? new THREE.MeshStandardMaterial(), n + bodies.length * CRUMBS); // crumbs are broken body: the piece's bake on a dodecahedron's UVs read as print
     grit.count = n;
     grit.castShadow = true;
     grit.frustumCulled = false;

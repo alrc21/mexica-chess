@@ -20,7 +20,7 @@ function dome() {
       fog: false,
       uniforms: {
         uDay: { value: 0 },
-        uSun: { value: new THREE.Vector3(10, 5.6, 7).normalize() },
+        uSun: { value: new THREE.Vector3(12, 12, 0).normalize() },
         uNightHorizon: { value: NIGHT_HORIZON.clone() },
         uDayHorizon: { value: DAY_HORIZON.clone() },
         uNightZenith: { value: new THREE.Color(0.006, 0.006, 0.007) },
@@ -98,7 +98,7 @@ function lightformers(day: boolean) {
     env.add(m);
   };
   if (day) {
-    card('#ffdcae', 14, 1.4, 1.4, 4.6, 2.6, 3.2); // sun, low and warm
+    card('#ffdcae', 14, 1.4, 1.4, 5.6, 5.6, 0); // sun, mid-afternoon and warm
     card('#a3b9d8', 1.6, 12, 4, 0, 7, 0);       // open sky overhead
     card('#8a7558', 1.1, 14, 3, 0, -4, 0);      // sunlit plaza bouncing back
   } else {
@@ -115,7 +115,7 @@ export type Place = 'tenochtitlan' | 'calakmul';
 const PLACES = {
   tenochtitlan: {
     skyline: 1, moon: 0, nightHorizon: '#100d0b', nightZenith: '#020202', dayHorizon: '#e3c9a0', moonlight: 0, flood: 1,
-    fog: { night: [16, 72], day: [45, 210] },
+    fog: { night: [24, 72], day: [45, 210] }, // night haze begins past the phone's camera (19–24 from the board)
   },
   // Humid air: a paler, cooler haze by day; by night a deep blue sky, a moon, and its light on the trees.
   calakmul: {
@@ -131,12 +131,13 @@ export function createAtmosphere(scene: THREE.Scene, renderer: THREE.WebGLRender
   scene.fog = fog;
   scene.background = NIGHT_HORIZON.clone();
   const pmrem = new THREE.PMREMGenerator(renderer);
-  const env = { night: pmrem.fromScene(lightformers(false), 0.02).texture, day: pmrem.fromScene(lightformers(true), 0.02).texture };
+  const bake = () => ({ night: pmrem.fromScene(lightformers(false), 0.02).texture, day: pmrem.fromScene(lightformers(true), 0.02).texture });
+  let env = bake();
   scene.environment = env.night;
 
   // Night key: a stage pool on the board.
-  const key = new THREE.SpotLight('#fff0dc', 420, 0, 0.56, 0.6, 2);
-  key.position.set(-3.2, 13, 5.5);
+  const key = new THREE.SpotLight('#fff0dc', 460, 0, 0.5, 0.9, 2); // phase 10: a softer, narrower pool, so the lifted board still falls off toward its corners
+  key.position.set(-4.5, 13, 0); // side-on to both seats, so neither sees only the far army's dark backs (phase 10)
   key.castShadow = true;
   key.shadow.mapSize.set(shadowSize, shadowSize);
   key.shadow.bias = -0.0002;
@@ -145,7 +146,7 @@ export function createAtmosphere(scene: THREE.Scene, renderer: THREE.WebGLRender
   // Day key: the sun from the side, low enough in the afternoon to rake the carving
   // of both armies and the temple's stairs.
   const sun = new THREE.DirectionalLight('#ffdcb0', 0);
-  sun.position.set(10, 5.6, 7); // ≈27° up: the golden hour, long shadows across the board
+  sun.position.set(12, 12, 0); // ≈45° up, side-on to both seats: the afternoon still rakes the carving, neither army is backlit, no piece stands in its own long shadow (phase 10)
   sun.castShadow = true;
   sun.shadow.mapSize.set(shadowSize, shadowSize);
   const sc = sun.shadow.camera;
@@ -161,6 +162,9 @@ export function createAtmosphere(scene: THREE.Scene, renderer: THREE.WebGLRender
   rim.position.set(3, 9, -12);
   const fill = new THREE.DirectionalLight('#ffe6cc', 0.55); // from the player's seat, so faces never go to mud
   fill.position.set(2, 6, 12);
+  // Both are placed for red's seat; seat() turns them round the board with the player (phase 10).
+  const FILL_AT = fill.position.clone(), RIM_AT = rim.position.clone(), UP = new THREE.Vector3(0, 1, 0);
+  const FILL_NIGHT = new THREE.Color('#ffc690'), FILL_DAY = new THREE.Color('#ffe6cc');
   const flood = new THREE.SpotLight('#ffb878', 1100, 0, 0.38, 0.9, 2); // the monument, floodlit from the plaza
   flood.position.set(0, 0.3, -11);
   flood.target.position.set(0, 5, monumentZ);
@@ -174,7 +178,7 @@ export function createAtmosphere(scene: THREE.Scene, renderer: THREE.WebGLRender
   const dayHorizon = DAY_HORIZON.clone();
   const SUN = new THREE.Color('#ffdcb0');
   const MOON = new THREE.Color('#9fb6dc');
-  const SUN_AT = new THREE.Vector3(10, 5.6, 7);
+  const SUN_AT = new THREE.Vector3(12, 12, 0);
   const MOON_AT = (sky.material as THREE.ShaderMaterial).uniforms.uMoon.value.clone().multiplyScalar(16); // light comes from the moon you see
   // `ground` is the plaza's normal strength: a floor scan raked by a low sun reads as cracked mud at full depth.
   const state = { k: 0, exposure: 1.22, bloom: 0.42, fire: 1, ground: 1.2, plaza: new THREE.Color('#857a6e'), dust: new THREE.Color('#6a5848') };
@@ -199,7 +203,7 @@ export function createAtmosphere(scene: THREE.Scene, renderer: THREE.WebGLRender
     fog.far = mix(P.fog.night[1], P.fog.day[1], k);
     scene.environment = k < 0.5 ? env.night : env.day;
     scene.environmentIntensity = k < 0.5 ? mix(0.9, 0.45, k * 2) : mix(0.45, 0.55, k * 2 - 1);
-    key.intensity = 420 * (1 - k);
+    key.intensity = 460 * (1 - k);
     // A dark light's shadow map isn't worth re-rendering.
     key.shadow.autoUpdate = k < 1;
     // By day the sun; at night in the forest, the same light turns to moonlight.
@@ -207,9 +211,10 @@ export function createAtmosphere(scene: THREE.Scene, renderer: THREE.WebGLRender
     sun.color.copy(MOON).lerp(SUN, k);
     sun.position.copy(P.moonlight ? MOON_AT : SUN_AT).lerp(SUN_AT, k);
     sun.shadow.autoUpdate = sun.intensity > 0;
-    hemi.intensity = 0.55 * k;
-    rim.intensity = mix(1.8, 0.5, k);
-    fill.intensity = mix(0.55, 0.25, k);
+    hemi.intensity = 1.0 * k; // the shadow side of the pieces and their shadows on the slabs (phase 10)
+    rim.intensity = mix(1.8, 1.5, k); // by day too: the far army's top edges against the frame and the plaza
+    fill.intensity = mix(1.3, 1.6, k); // phase 10: the side the player sees carries the read
+    fill.color.copy(FILL_NIGHT).lerp(FILL_DAY, k); // by night it is firelight
     flood.intensity = 1100 * (1 - k) ** 2 * P.flood;
     state.exposure = mix(1.22, 0.95, k);
     state.ground = mix(1.2, 0.8, k);
@@ -225,6 +230,15 @@ export function createAtmosphere(scene: THREE.Scene, renderer: THREE.WebGLRender
     set,
     get place() { return place; },
     setPlace(p: Place) { place = p; set(state.k); },
+    /** The seat's azimuth round the board (0: red's, π: black's): the fill and rim stand with it. */
+    seat(az: number) { fill.position.copy(FILL_AT).applyAxisAngle(UP, az); rim.position.copy(RIM_AT).applyAxisAngle(UP, az); },
+    /** After a lost WebGL context: bake the environment again (its targets come back empty) and redraw both shadow maps. */
+    restore() {
+      env.night.dispose(); env.day.dispose();
+      env = bake();
+      set(state.k);
+      key.shadow.needsUpdate = sun.shadow.needsUpdate = true;
+    },
     dispose() { pmrem.dispose(); env.night.dispose(); env.day.dispose(); },
   };
 }

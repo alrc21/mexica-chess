@@ -27,6 +27,24 @@ const GRAIN_MAP: Record<Stone, 'tezontle' | 'basalt'> = { tezontle: 'tezontle', 
 const GRAIN_STRENGTH: Record<Stone, number> = { tezontle: 0.9, cantera: 0.6, basalt: 0.35, andesite: 0.5, limestone: 0.3 };
 // Contrast for play: red reads red, the dark squares sit between black basalt and pale cantera.
 const TINT: Record<Stone, number> = { tezontle: 1.2, basalt: 1.0, cantera: 0.9, andesite: 1.45, limestone: 1.0 };
+/**
+ * On the board the stone is lifted per object, measured on a phone's playing view (phase 10,
+ * scripts/contrast.mjs): on screen black basalt < red tezontle < grey andesite < pale cantera,
+ * about 1.8:1 between neighbours. Linear RGB in place of TINT, so the temple, shrines, braziers
+ * and walls keep theirs. The red lifts mostly in its red channel (redder as it lightens), the
+ * andesite a little toward blue (a cool grey), the frame off the black army.
+ */
+type RGB = [number, number, number];
+const BOARD_TINT = {
+  // Tezontle: a dusty oxide brick, a little more green than blue in it, not a pure red.
+  piece: { tezontle: [5.2, 3.75, 2.3] as RGB, basalt: [0.7, 0.7, 0.7] as RGB },
+  slab: { cantera: [1.5, 1.5, 1.5] as RGB, andesite: [7.35, 7.75, 8.6] as RGB },
+  frame: [6, 6, 6] as RGB,
+};
+/** How far each lifted stone's colour is drawn toward its mean (addGrain): andesite's blotches, tezontle's printed-looking speckle. */
+const BOARD_FLAT = { tezontle: 0.35, andesite: 0.65, frame: 0.6 };
+/** What a board stone gained over its plain TINT: fresh breaks and slab interiors follow it. */
+const lift = (hex: string, t: RGB, stone: Stone) => new THREE.Color(hex).multiply(new THREE.Color(...t).multiplyScalar(1 / TINT[stone]));
 
 /**
  * What the pieces are carved in (phase 9a): volcanic stone, or the same pieces
@@ -38,12 +56,13 @@ const TINT: Record<Stone, number> = { tezontle: 1.2, basalt: 1.0, cantera: 0.9, 
  */
 type Mineral = 'obsidian' | 'jade' | 'amber';
 const STONE_PARAM = typeof location !== 'undefined' ? new URLSearchParams(location.search).get('stone') : null;
-export const FIRST_CARVING: Carving = STONE_PARAM === 'jade' || STONE_PARAM === 'amber' ? STONE_PARAM : 'stone';
+export const FIRST_CARVING: Carving = STONE_PARAM === 'jade' || STONE_PARAM === 'amber' || STONE_PARAM === 'clay' ? STONE_PARAM : 'stone';
 const MINERALS: Record<Mineral, THREE.MeshPhysicalMaterialParameters> = {
-  obsidian: { roughness: 0.05, ior: 1.49, attenuationColor: '#4a3a30', attenuationDistance: 0.38 },
-  // The base colour tints the light passing through too: keep it pale, let the volume carry the green.
-  jade: { color: '#eef5ee', roughness: 0.32, ior: 1.66, attenuationColor: '#5cae7c', attenuationDistance: 0.4 },
-  amber: { roughness: 0.07, ior: 1.54, attenuationColor: '#e8a540', attenuationDistance: 0.55 },
+  obsidian: { color: '#1c1a18', transmission: 0.6, roughness: 0.05, ior: 1.49, attenuationColor: '#4a3a30', attenuationDistance: 0.2 }, // phase 10: dark against the lighter slabs and the frame
+  // Phase 10: some of the light is the stone's own (its body holds a value against either square on a phone);
+  // most still passes, brightest at the thin edges. The colour carries the mineral in the diffuse part.
+  jade: { color: '#5a9673', transmission: 0.7, roughness: 0.32, ior: 1.66, attenuationColor: '#5cae7c', attenuationDistance: 0.4 },
+  amber: { color: '#b07028', transmission: 0.7, roughness: 0.07, ior: 1.54, attenuationColor: '#e8a540', attenuationDistance: 0.55 },
 };
 /**
  * What shows through, read once: three filters it bicubically at two mip
@@ -55,11 +74,102 @@ const BICUBIC = 'return textureBicubic( transmissionSamplerMap, fragCoord.xy, lo
 if (!THREE.ShaderChunk.transmission_pars_fragment.includes(BICUBIC)) console.warn('[stage] transmission chunk changed: minerals keep the bicubic read');
 const ONE_TAP = THREE.ShaderChunk.transmission_pars_fragment.replace(BICUBIC, 'return textureLod( transmissionSamplerMap, fragCoord.xy, lod );');
 
-function addGrain(mat: THREE.MeshStandardMaterial, map: THREE.Texture, scale: number, strength: number) {
+/**
+ * Clay (phase 11; raw since phase 12): the pieces and the board modelled and fired bare, bisque, no
+ * glaze. Matte: the read is in the colour, not in what it mirrors (a glaze read as wet plastic on the
+ * playing view). The carving keeps its polished cut (polish.py) under a tiling grain, the clay's grog;
+ * the clay map (blender/glaze.py) washes the recesses darker (R: where dust and slip gather), lightens
+ * the handled edges (G) and mottles the firing (B: clouds and runs, flashing; specks of grog at 0).
+ * Bone clay against terracotta; the board in the same two clays with sandy joints, the rim a shade
+ * below the pale tiles. Values for play on a phone (scripts/contrast.mjs): terracotta army <
+ * terracotta tile < pale tile < bone army.
+ */
+type Clay = { color: string; wash: string; worn: string; speck: string; fire: number; specks: number; rough: number };
+const CLAY = {
+  w: { color: '#e2d9c8', wash: '#7d6f60', worn: '#efe7da', speck: '#6e5a48', fire: 0.26, specks: 0.55, rough: 0.9 },
+  b: { color: '#6c2c19', wash: '#240c05', worn: '#8e4529', speck: '#2a0f07', fire: 0.5, specks: 0.6, rough: 0.92 },
+  rim: { color: '#a1998c', wash: '#6e665b', worn: '#aea699', speck: '#5e4c3c', fire: 0.18, specks: 0.5, rough: 0.94 },
+  light: { color: '#958879', wash: '#7d7163', worn: '#a19484', speck: '#5e4c3c', fire: 0.18, specks: 0.5, rough: 0.92 },
+  dark: { color: '#8a5236', wash: '#6a3c26', worn: '#965c3c', speck: '#3e1e10', fire: 0.45, specks: 0.9, rough: 0.96 },
+} satisfies Record<string, Clay>;
+const JOINT = { color: '#8c7a5e', roughness: 1 }; // sandy joints: the bed shows in the seams (colour only: raised, it would cover the broken slabs' dish)
+// × the contact shadow (board.ts): the bone army's draws its foot on the pale tile; under the terracotta it would pull the tile toward the piece
+const CLAY_CONTACT = { w: 3, b: 0.5 };
+const CLAY_BLOOM = 0.15; // × the bloom: bare clay doesn't burn; the fires still glow a little
+const CLAY_PATCH: [string, string][] = [
+  ['#include <map_pars_fragment>', `#include <map_pars_fragment>
+uniform sampler2D clayMap;
+uniform vec3 clayWash, clayWorn, claySpeck, clayMix;`],
+  ['#include <color_fragment>', `#include <color_fragment>
+	vec3 cm = texture2D( clayMap, vNormalMapUv ).rgb;
+	float clayFire = clamp( ( cm.b - 0.25 ) / 0.75, 0.0, 1.0 ) - 0.5;
+	float clayWashK = smoothstep( 0.02, 0.4, cm.r ), clayWornK = smoothstep( 0.15, 0.8, cm.g ) * ( 1.0 - clayWashK );
+	diffuseColor.rgb *= 1.0 + clayMix.x * clayFire;
+	diffuseColor.rgb = mix( diffuseColor.rgb, clayWorn, 0.6 * clayWornK );
+	diffuseColor.rgb = mix( diffuseColor.rgb, clayWash, 0.85 * clayWashK );
+	diffuseColor.rgb = mix( diffuseColor.rgb, claySpeck, ( 1.0 - smoothstep( 0.05, 0.18, cm.b ) ) * clayMix.y );`],
+  // Matte, a little rougher in the wash and smoother where handled; the fine normal's own variance widens it
+  // further (specular antialiasing), so no pixel can sparkle.
+  ['#include <lights_physical_fragment>', `#include <lights_physical_fragment>
+	vec3 clayDx = dFdx( normal ), clayDy = dFdy( normal );
+	float clayVar = min( 2.0 * max( dot( clayDx, clayDx ), dot( clayDy, clayDy ) ), 0.25 );
+	material.roughness = clamp( sqrt( pow( clayMix.z + 0.05 * clayFire + 0.06 * clayWashK - 0.08 * clayWornK, 2.0 ) + clayVar ), 0.6, 1.0 );`],
+];
+/** Bare clay on a material that has a normal map (the clay map shares its UVs), over its grain (addGrain first). */
+function addClay(mat: THREE.MeshStandardMaterial, map: THREE.Texture, g: Clay) {
+  const uniforms = {
+    clayMap: { value: map }, clayWash: { value: new THREE.Color(g.wash) }, clayWorn: { value: new THREE.Color(g.worn) },
+    claySpeck: { value: new THREE.Color(g.speck) }, clayMix: { value: new THREE.Vector3(g.fire, g.specks, g.rough) },
+  };
+  const grain = mat.onBeforeCompile;
+  mat.onBeforeCompile = (s, r) => {
+    grain.call(mat, s, r);
+    Object.assign(s.uniforms, uniforms);
+    for (const [at, to] of CLAY_PATCH) {
+      if (!s.fragmentShader.includes(at)) console.warn(`[stage] clay patch missed ${at}`);
+      s.fragmentShader = s.fragmentShader.replace(at, to);
+    }
+  };
+  mat.customProgramCacheKey = () => 'grain-clay';
+}
+
+/** The mean of a base-colour texture, linear (sRGB decoded), near-black atlas padding left out. */
+function meanColour(tex: THREE.Texture) {
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const x = c.getContext('2d')!;
+  x.drawImage(tex.image as CanvasImageSource, 0, 0, 64, 64);
+  const d = x.getImageData(0, 0, 64, 64).data, sum = new THREE.Color(0, 0, 0), px = new THREE.Color();
+  let n = 0;
+  for (let i = 0; i < d.length; i += 4) {
+    if (d[i] + d[i + 1] + d[i + 2] < 6) continue;
+    sum.add(px.setRGB(d[i] / 255, d[i + 1] / 255, d[i + 2] / 255, THREE.SRGBColorSpace));
+    n++;
+  }
+  return sum.multiplyScalar(1 / Math.max(n, 1));
+}
+
+/**
+ * `flat` (0–1) draws the base colour toward its own mean before lighting: a dark texture lifted
+ * several times over (phase 10) keeps its level but not its blotches; cracks and joints stay in
+ * the normals and in what is left of the colour.
+ */
+function addGrain(mat: THREE.MeshStandardMaterial, map: THREE.Texture, scale: number, strength: number, flat = 0) {
+  const mean = flat && mat.map ? meanColour(mat.map) : null;
   mat.onBeforeCompile = shader => {
     shader.uniforms.grainMap = { value: map };
     shader.uniforms.grainScale = { value: scale };
     shader.uniforms.grainStrength = { value: strength };
+    if (mean) {
+      shader.uniforms.albedoMean = { value: mean };
+      shader.uniforms.albedoFlat = { value: flat };
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <map_pars_fragment>', `#include <map_pars_fragment>
+uniform vec3 albedoMean;
+uniform float albedoFlat;`)
+        .replace('#include <map_fragment>', `#include <map_fragment>
+	diffuseColor.rgb = mix( diffuseColor.rgb, diffuse * albedoMean, albedoFlat );`);
+    }
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <normalmap_pars_fragment>', `#include <normalmap_pars_fragment>
 uniform sampler2D grainMap;
@@ -72,7 +182,7 @@ uniform float grainStrength;`)
 	mapN = normalize( vec3( mapN.xy + grainN.xy * grainStrength, mapN.z ) );`,
       ));
   };
-  mat.customProgramCacheKey = () => 'grain';
+  mat.customProgramCacheKey = () => (mean ? 'grain-flat' : 'grain');
 }
 
 // Board space: files a–h run along +x, rank 1 is nearest +z (tezontle).
@@ -264,16 +374,54 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
   // ── Models ────────────────────────────────────────────────────────────────
   // Returns the glTF root: the mesh node inside keeps the scale/offset meshopt
   // quantisation stored on it; we only ever move the root.
-  const gltf = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
-  const load = async (name: string, stone: Stone, grainScale: number) => {
+  // Their textures come as <img>, like the plaza's, not as GLTFLoader's ImageBitmaps. After a lost WebGL
+  // context three re-uploads every texture from its image; a bitmap that died with the context uploads
+  // black, which is exactly a player's iPhone screenshot (board and pieces dark on a lit plaza, phase 10;
+  // that iOS drops them is inferred). An <img> can also have its decoded pixels dropped and decoded again,
+  // where ~180 bitmaps keep theirs for the whole session.
+  // Phones get them at half size (1024² → 512², a quarter of the GPU memory): drawn once on a canvas that
+  // goes straight back (iOS caps canvas memory), kept as a small <img> so a lost context can upload it again.
+  // Safari can't write WebP (it would fall back to PNG, ~4× the bytes kept per texture): JPEG there; the stone is opaque.
+  const HALF_TYPE = new URLSearchParams(location.search).get('half') !== 'jpeg' && document.createElement('canvas').toDataURL('image/webp').startsWith('data:image/webp') ? 'image/webp' : 'image/jpeg'; // ?half=jpeg: Safari's branch, to test in Chrome
+  const half = async (t: THREE.Texture) => {
+    const img = t.image as HTMLImageElement;
+    if (!(img instanceof HTMLImageElement) || img.width <= 512) return t; // a clone of one already halved
+    await img.decode().catch(() => {}); // off the main thread, so drawing it is cheap
+    const c = document.createElement('canvas');
+    c.width = img.width >> 1;
+    c.height = img.height >> 1;
+    const g = c.getContext('2d')!;
+    g.imageSmoothingQuality = 'high';
+    g.drawImage(img, 0, 0, c.width, c.height);
+    const blob = await new Promise<Blob | null>(r => c.toBlob(r, HALF_TYPE, 0.92));
+    c.width = c.height = 0;
+    if (!blob) return t;
+    const small = new Image();
+    small.src = URL.createObjectURL(blob);
+    await small.decode().catch(() => {});
+    URL.revokeObjectURL(small.src);
+    t.image = small;
+    t.needsUpdate = true;
+    return t;
+  };
+  const gltf = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder).register(parser => {
+    parser.textureLoader = new THREE.TextureLoader(parser.options.manager);
+    if (PHONE) {
+      const source = parser.loadImageSource.bind(parser);
+      parser.loadImageSource = (i, loader) => source(i, loader).then(half);
+    }
+    return { name: 'img-textures' };
+  });
+  const load = async (name: string, stone: Stone, grainScale: number, tint?: RGB, flat = 0) => {
     const g = await gltf.loadAsync(`/models/${name}-${stone}.glb`);
     g.scene.traverse(o => {
       const m = o as THREE.Mesh;
       if (!m.isMesh) return;
       m.castShadow = m.receiveShadow = true;
       const mat = m.material as THREE.MeshStandardMaterial;
-      mat.color.multiplyScalar(TINT[stone]);
-      addGrain(mat, grain[GRAIN_MAP[stone]], grainScale, GRAIN_STRENGTH[stone]);
+      if (tint) mat.color.multiply(new THREE.Color(...tint));
+      else mat.color.multiplyScalar(TINT[stone]);
+      addGrain(mat, grain[GRAIN_MAP[stone]], grainScale, GRAIN_STRENGTH[stone], flat);
     });
     return g.scene;
   };
@@ -307,6 +455,7 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
   let jungleUpdate: ((t: number, mist: THREE.Color) => void) | null = null;
   let setTemples: ((m: Record<'temple0' | 'temple1' | 'acropolis', THREE.Object3D>) => void) | null = null;
   let setCarving: ((s: Carving) => Promise<void>) | null = null;
+  let carvedIn: Carving = 'stone';
 
   // ── Scars: a slab where a piece was destroyed is swapped for a broken one ─
   // Each square keeps a stack (intact, cracked, shattered) tagged by ply, so
@@ -322,7 +471,8 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
     obj.traverse(o => {
       const m = o as THREE.Mesh;
       if (!m.isMesh) return;
-      m.material = (m.material as THREE.Material).name === 'interior' ? interiorOf[s.stone]! : exterior;
+      m.userData.cut = (m.material as THREE.Material).name === 'interior'; // a change of carving re-dresses it (carveIn)
+      m.material = m.userData.cut ? interiorOf[s.stone]! : exterior;
       m.receiveShadow = m.castShadow = true; // the rim shades the plates sunk below it
     });
     return obj;
@@ -409,6 +559,7 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
   let mode: 'intro' | 'orbit' | 'walk' | 'scripted' = 'intro';
   let walking = false;
   let side: Color = 'w';
+  let seatAz = 0; // where the fill and rim stand: they follow the seat round the board
   const look = new THREE.Vector3();
   const fwd = new THREE.Vector3();
   const setView = (v: View) => {
@@ -660,10 +811,10 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
   (async () => {
     const kinds = Object.keys(MODEL) as PieceSymbol[];
     const [pieces, slabModels, frame, corner, brazier, monument, precinct] = await Promise.all([
-      Promise.all((['w', 'b'] as Color[]).map(c => Promise.all(kinds.map(k => load(MODEL[k], STONE[c], 9))))),
-      Promise.all((['cantera', 'andesite'] as const).map(s => Promise.all([0, 1, 2].map(v => load(`slab${v}`, s, 4))))),
-      load('frame', 'basalt', 7),
-      load('corner', 'basalt', 5),
+      Promise.all((['w', 'b'] as Color[]).map(c => Promise.all(kinds.map(k => load(MODEL[k], STONE[c], 9, BOARD_TINT.piece[STONE[c]], c === 'w' ? BOARD_FLAT.tezontle : 0))))),
+      Promise.all((['cantera', 'andesite'] as const).map(s => Promise.all([0, 1, 2].map(v => load(`slab${v}`, s, 4, BOARD_TINT.slab[s], s === 'andesite' ? BOARD_FLAT.andesite : 0))))),
+      load('frame', 'basalt', 7, BOARD_TINT.frame, BOARD_FLAT.frame),
+      load('corner', 'basalt', 5, BOARD_TINT.frame, BOARD_FLAT.frame),
       load('brazier', 'basalt', 7),
       load('monument', 'tezontle', 9),
       (async () => {
@@ -686,12 +837,14 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
         slabs.set(`${String.fromCharCode(97 + f)}${r + 1}` as Square, { variant: h % 3, stone: light ? 'cantera' : 'andesite', stack: [{ ply: 0, obj }] });
       }
     }
+    const rim: THREE.Object3D[] = []; // the frame and its corners, re-dressed with the carving
     for (let k = 0; k < 4; k++) {
       const edge = new THREE.Group();
       edge.rotation.y = k * Math.PI / 2;
       for (const x of [-3, -1, 1, 3]) place(frame, new THREE.Vector3(x, 0, 4.25), 0, 1, edge);
       place(corner, new THREE.Vector3(4.3, 0, 4.25), 0, 1, edge);
       scene.add(edge);
+      rim.push(edge);
     }
     BRAZIERS.forEach((b, i) => {
       const p = new THREE.Vector3(b.x, 0, b.z);
@@ -764,29 +917,100 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
     const stoneOf = new Map<THREE.Object3D, THREE.MeshStandardMaterial>(pieces.flat().map(o => [o, meshOf(o).material as THREE.MeshStandardMaterial]));
     const bakes = new Map<PieceSymbol, Bake>();
     const worn = new Map<string, THREE.Material>();
+
+    // Clay (phase 11): every map loaded once (both armies share a sculpt and its UVs), halved on phones like the models' own.
+    const glazed = new Map<string, THREE.Texture>();
+    const glazeTex = (path: string) => {
+      if (!glazed.has(path)) {
+        const t = textures.load(`/textures/${path}.webp`, PHONE ? t => void half(t) : undefined);
+        t.flipY = false; // glTF's UVs
+        t.anisotropy = aniso;
+        glazed.set(path, t);
+      }
+      return glazed.get(path)!;
+    };
+    /** Bare fired clay on a baked model: `normal` carries the carving, the grain the clay, occlusion from its stone bake. */
+    const fired = (src: THREE.MeshStandardMaterial, normal: string, map: string, g: Clay, grainScale: number) => {
+      const mat = new THREE.MeshStandardMaterial({ name: 'clay', color: g.color, roughness: g.rough, normalMap: glazeTex(normal), aoMap: src.aoMap });
+      mat.normalScale.copy(src.normalScale);
+      addGrain(mat, grain.tezontle, grainScale, 0.45);
+      addClay(mat, glazeTex(map), g);
+      return mat;
+    };
+    const clay = (c: Color, k: PieceSymbol) => fired(stoneOf.get(models[c][k])!, `polish/${MODEL[k]}-nor`, `glaze/${MODEL[k]}-glaze`, CLAY[c], 9);
+    // The board in clay: the same slabs and UVs (so the broken ones still dress), as fired tiles; the rim in the pale clay; the bed as joints.
+    const slabSrc = (stone: Slab['stone'], v: number) => meshOf(slabModels[stone === 'cantera' ? 0 : 1][v]).material as THREE.MeshStandardMaterial;
+    const tiles = new Map<string, THREE.Material>();
+    const tileOf = (stone: Slab['stone'], v: number, s: Carving): THREE.Material => {
+      if (s !== 'clay') return slabSrc(stone, v);
+      if (!tiles.has(stone + v)) {
+        const mat = fired(slabSrc(stone, v), `glaze/slab${v}-nor`, `glaze/slab${v}-glaze`, stone === 'cantera' ? CLAY.light : CLAY.dark, 4);
+        mat.name = `${stone}-clay`; // scripts/contrast.mjs tells the squares apart by it
+        tiles.set(stone + v, mat);
+      }
+      return tiles.get(stone + v)!;
+    };
+    const rimSrc = { frame: meshOf(frame), corner: meshOf(corner) };
+    const rims: Partial<Record<keyof typeof rimSrc, THREE.Material>> = {};
+    const rimOf = (m: THREE.Mesh, s: Carving) => {
+      const part = m.geometry === rimSrc.frame.geometry ? 'frame' : 'corner', src = rimSrc[part].material as THREE.MeshStandardMaterial;
+      return s !== 'clay' ? src : rims[part] ??= fired(src, `glaze/${part}-nor`, `glaze/${part}-glaze`, CLAY.rim, 7);
+    };
+    const stoneCut: typeof interiorOf = {}; // filled once the broken slabs load
+    let clayCuts: typeof interiorOf | null = null;
+    const clayCut = () => clayCuts ??= { // fresh breaks: the same clays, a shade darker inside
+      cantera: new THREE.MeshStandardMaterial({ color: '#d6b79c', roughness: 0.95, normalMap: grain.tezontle, normalScale: new THREE.Vector2(0.6, 0.6), vertexColors: true }),
+      andesite: new THREE.MeshStandardMaterial({ color: '#94492a', roughness: 0.95, normalMap: grain.tezontle, normalScale: new THREE.Vector2(0.8, 0.8), vertexColors: true }),
+    };
+    const bedMat = bed.material as THREE.MeshStandardMaterial;
+    const BED = { color: bedMat.color.clone(), roughness: bedMat.roughness };
+    const dressBoard = (s: Carving) => {
+      Object.assign(interiorOf, s === 'clay' ? clayCut() : stoneCut);
+      for (const sl of slabs.values()) for (const { obj } of sl.stack) obj.traverse(o => {
+        const m = o as THREE.Mesh;
+        if (m.isMesh) m.material = m.userData.cut ? interiorOf[sl.stone]! : tileOf(sl.stone, sl.variant, s);
+      });
+      for (const e of rim) e.traverse(o => { const m = o as THREE.Mesh; if (m.isMesh) m.material = rimOf(m, s); });
+      const b = s === 'clay' ? JOINT : BED;
+      bedMat.color.set(b.color);
+      bedMat.roughness = b.roughness;
+    };
+
     const wear = (c: Color, k: PieceSymbol, s: Carving): THREE.Material => {
       if (s === 'stone') return stoneOf.get(models[c][k])!;
       const key = `${s}-${c}-${k}`;
       if (!worn.has(key)) {
-        if (!bakes.has(k)) bakes.set(k, lend(MODEL[k], stoneOf.get(models.b[k])!));
-        worn.set(key, mineral(c === 'b' ? 'obsidian' : s, bakes.get(k)));
+        if (s !== 'clay' && !bakes.has(k)) bakes.set(k, lend(MODEL[k], stoneOf.get(models.b[k])!));
+        worn.set(key, s === 'clay' ? clay(c, k) : mineral(c === 'b' ? 'obsidian' : s, bakes.get(k)));
       }
       return worn.get(key)!;
     };
-    // A fresh break: raw stone, or the mineral without its bake.
+    // A fresh break: raw stone, unglazed clay body, or the mineral without its bake.
     const breaks: Partial<Record<Carving, Record<'tezontle' | 'basalt', THREE.Material>>> = {};
     const breakOf = (s: Carving) => breaks[s] ??= s === 'stone' ? {
-      tezontle: new THREE.MeshStandardMaterial({ color: '#4f2218', roughness: 1, normalMap: grain.tezontle, normalScale: new THREE.Vector2(1.4, 1.4) }),
+      tezontle: new THREE.MeshStandardMaterial({ color: lift('#4f2218', BOARD_TINT.piece.tezontle, 'tezontle'), roughness: 1, normalMap: grain.tezontle, normalScale: new THREE.Vector2(1.4, 1.4) }),
       basalt: new THREE.MeshStandardMaterial({ color: '#24221f', roughness: 0.88, normalMap: grain.basalt, normalScale: new THREE.Vector2(1, 1) }),
+    } : s === 'clay' ? {
+      tezontle: new THREE.MeshStandardMaterial({ color: '#dcbfa6', roughness: 0.95, normalMap: grain.tezontle, normalScale: new THREE.Vector2(0.7, 0.7) }),
+      basalt: new THREE.MeshStandardMaterial({ color: '#7e3a1e', roughness: 0.95, normalMap: grain.tezontle, normalScale: new THREE.Vector2(0.9, 0.9) }),
     } : { tezontle: mineral(s), basalt: mineral('obsidian') };
+    /** One of each board material a carving wears, for its warm-up (breaks and cuts included). */
+    const boardWear = (s: Carving) => [
+      ...([0, 1] as const).flatMap(i => [0, 1, 2].map(v => new THREE.Mesh(meshOf(slabModels[i][v]).geometry, tileOf(i ? 'andesite' : 'cantera', v, s)))),
+      ...Object.values(rimSrc).map(m => new THREE.Mesh(m.geometry, rimOf(m, s))),
+      ...[...Object.values(breakOf(s)), ...Object.values(s === 'clay' ? clayCut() : stoneCut)].map(m => new THREE.Mesh(rimSrc.corner.geometry, m!)),
+      new THREE.InstancedMesh(rimSrc.corner.geometry, breakOf(s).tezontle, 1), // the crumbs
+    ];
     let carving: Carving = 'stone';
     let shardSet: Record<PieceSymbol, THREE.Object3D> | null = null;
     const carveIn = (s: Carving) => {
-      carving = s;
+      carving = carvedIn = s;
       for (const c of ['w', 'b'] as Color[]) for (const k of kinds) {
         meshOf(models[c][k]).material = wear(c, k, s);
-        models[c][k].userData.contact = s !== 'stone' && c === 'w' ? 0.45 : undefined; // light gets under amber and jade
+        models[c][k].userData.contact = s === 'clay' ? CLAY_CONTACT[c]
+          : s !== 'stone' && c === 'w' ? 0.45 : undefined; // light gets under amber and jade
       }
+      dressBoard(s);
       board!.redress();
       if (shardSet) board!.setShards(shardSet, breakOf(s));
       renderer.shadowMap.needsUpdate = true;
@@ -795,6 +1019,7 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
       if (s === carving) return;
       // The new programs compile off-screen first, so the swap itself costs no frame.
       const samples = (['w', 'b'] as Color[]).flatMap(c => kinds.map(k => new THREE.Mesh(meshOf(models[c][k]).geometry, wear(c, k, s))));
+      samples.push(...boardWear(s));
       for (const m of samples) m.position.y = -5;
       scene.add(...samples);
       await inComposer(() => renderer.compileAsync(scene, camera));
@@ -820,8 +1045,9 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
     board.setShards(shards, breakOf(carving));
     // Broken slabs (blender/damage.py): cracked and shattered, per variant. Missing files just mean no scars.
     // Fresh cuts: pale at the lip, into shadow with depth (vertex colour baked by damage.py).
-    interiorOf.cantera = new THREE.MeshStandardMaterial({ color: '#c4b498', roughness: 0.95, normalMap: grain.tezontle, normalScale: new THREE.Vector2(0.8, 0.8), vertexColors: true });
-    interiorOf.andesite = new THREE.MeshStandardMaterial({ color: '#57544f', roughness: 0.9, normalMap: grain.basalt, normalScale: new THREE.Vector2(0.9, 0.9), vertexColors: true });
+    stoneCut.cantera = new THREE.MeshStandardMaterial({ color: lift('#c4b498', BOARD_TINT.slab.cantera, 'cantera'), roughness: 0.95, normalMap: grain.tezontle, normalScale: new THREE.Vector2(0.8, 0.8), vertexColors: true });
+    stoneCut.andesite = new THREE.MeshStandardMaterial({ color: lift('#57544f', BOARD_TINT.slab.andesite, 'andesite'), roughness: 0.9, normalMap: grain.basalt, normalScale: new THREE.Vector2(0.9, 0.9), vertexColors: true });
+    Object.assign(interiorOf, (carving as Carving) === 'clay' ? clayCut() : stoneCut); // carveIn may have run since
     broken = await Promise.all([0, 1, 2].map(v => Promise.all([1, 2].map(l =>
       gltf.loadAsync(`/models/damage/slab${v}-${l}.glb`).then(g => g.scene, () => null)))));
     if (disposed) return;
@@ -829,7 +1055,7 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
     const sample = shards.p.clone();
     const pieceMat = (pieces[0][0].getObjectByProperty('isMesh', true) as THREE.Mesh).material as THREE.Material;
     sample.traverse(o => { const m = o as THREE.Mesh; if (m.isMesh) m.material = (m.material as THREE.Material).name === 'interior' ? breakOf(carving).tezontle : pieceMat; });
-    const grit = new THREE.InstancedMesh(new THREE.DodecahedronGeometry(1, 0), pieceMat, 1);
+    const grit = new THREE.InstancedMesh(new THREE.DodecahedronGeometry(1, 0), breakOf(carving).tezontle, 1); // crumbs wear the break (rubble.ts)
     const samples: THREE.Object3D[] = [sample, grit];
     for (const stone of ['cantera', 'andesite'] as const) {
       const src = broken.flat().find(Boolean);
@@ -840,6 +1066,14 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
     scene.add(...samples);
     await inComposer(() => renderer.compileAsync(scene, camera));
     scene.remove(...samples);
+    // The shadow pass draws crumbs (instanced) and sinking plates (morphs) with depth programs compile() never builds: their
+    // twins, in a plain depth material with its side flipped as the shadow map flips it, against the scene's lights without
+    // its fog (the shadow pass draws with none), link now and not at the first capture (scripts/jank.mjs).
+    // Plates carry their face's map into the shadow (a stone slab has one, a clay tile and the cuts none): both twins.
+    const depth = new THREE.MeshDepthMaterial({ side: THREE.BackSide }), mapped = new THREE.MeshDepthMaterial({ side: THREE.BackSide, map: grain.tezontle });
+    const twins = new THREE.Scene(), plate = samples.slice(2).flatMap(o => o.getObjectsByProperty('isMesh', true) as THREE.Mesh[]).find(m => m.morphTargetInfluences);
+    twins.add(new THREE.InstancedMesh(grit.geometry, depth, 1), ...(plate ? [depth, mapped].map(material => Object.assign(plate.clone(), { material })) : []));
+    await inComposer(() => renderer.compileAsync(twins, camera, Object.create(scene, { fog: { value: null } })));
 
     // Calakmul's temples, from Blender: only that place shows them, so they come last.
     try {
@@ -969,6 +1203,12 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
     if (mode === 'walk') camera.fov = WALK_FOV();
     camera.updateProjectionMatrix();
   };
+  // A context given back is blank: three re-uploads textures and recompiles by itself, but the
+  // shadow maps (re-rendered only on demand) and the environment (baked once) must be made again.
+  const restored = () => { atmo.restore(); renderer.shadowMap.needsUpdate = true; };
+  canvas.addEventListener('webglcontextrestored', restored);
+  let lostFor = 0; // seconds on screen without a context
+
   const ro = new ResizeObserver(resize);
   ro.observe(canvas);
   resize();
@@ -1008,6 +1248,15 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
     timer.update();
     const raw = timer.getDelta();
     const real = Math.min(raw, 1 / 20);
+    // The browser never gave the context back: reload rather than leave a blank board, at most once a minute.
+    // ponytail: the game in progress is lost (it lives only in memory); keep its moves in sessionStorage if that matters.
+    lostFor = renderer.getContext().isContextLost() ? lostFor + real : 0;
+    if (lostFor > 4 && Date.now() - Number(sessionStorage.getItem('mc-reload') ?? 0) > 60_000) {
+      sessionStorage.setItem('mc-reload', String(Date.now()));
+      renderer.setAnimationLoop(null);
+      location.reload();
+      return;
+    }
     now += real;
     if (mode !== 'scripted') rush = 1;
     const dt = real * timeScale() * rush;
@@ -1034,9 +1283,12 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
     else if (mode === 'walk') walk.update(real);
 
     const s = atmo.state;
+    // Fill and rim come round with the seat (positions only: nothing recompiles), so whoever plays sees the lit side.
+    seatAz += ((side === 'w' ? 0 : Math.PI) - seatAz) * (1 - Math.exp(-real * 2.5));
+    atmo.seat(seatAz);
     renderer.toneMappingExposure = s.exposure;
     flare *= Math.exp(-real * 3);
-    bloom.strength = s.bloom + flare;
+    bloom.strength = s.bloom * (carvedIn === 'clay' ? CLAY_BLOOM : 1) + flare;
     for (const { fire, home } of fires) fire.update(t, camera, home.visible ? s.fire : 0, 1 - 0.3 * s.k);
     jungleUpdate?.(t, mistColor.copy(MIST_NIGHT).lerp(MIST_DAY, s.k));
     board?.setDustColor(s.dust);
@@ -1072,6 +1324,7 @@ export function createStage(canvas: HTMLCanvasElement, events: StageEvents) {
     canvas.removeEventListener('pointercancel', onUp);
     canvas.removeEventListener('pointermove', onMove);
     canvas.removeEventListener('pointerleave', onLeave);
+    canvas.removeEventListener('webglcontextrestored', restored);
     walk.stop();
     ro.disconnect();
     controls.dispose();

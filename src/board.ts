@@ -67,7 +67,7 @@ const CONTACT = (() => {
   return t;
 })();
 const CONTACT_GEO = new THREE.PlaneGeometry(1.2, 1.2).rotateX(-Math.PI / 2);
-const CONTACT_DARK = 0.55;
+const CONTACT_DARK = 0.3; // phase 10: at 0.55 it pulled the slab under a black piece toward the piece
 const contactMaterial = () => new THREE.MeshBasicMaterial({
   color: '#000000', alphaMap: CONTACT, transparent: true, opacity: CONTACT_DARK,
   depthWrite: false, toneMapped: false, fog: false,

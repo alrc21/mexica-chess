@@ -20,6 +20,8 @@ export type View = {
   promoting: boolean;
   hover: { name: string; role: string; side: string } | null;
   canUndo: boolean;
+  /** The moves so far: App keeps them across a reload. */
+  pgn: string;
   lesson: {
     id: string;
     feedback: { tone: 'good' | 'bad'; text: string } | null;
@@ -110,6 +112,7 @@ export function createGame(stage: Stage, engine: Engine, emit: (v: View) => void
     promoting: !!promoting,
     hover,
     canUndo: phase !== 'intro' && !lesson && !busy && chess.history().length > (settings.mode === 'machine' && settings.side === 'b' ? 1 : 0),
+    pgn: chess.pgn(),
     lesson: lesson && { id: lesson.id, feedback, solved: ls.solved, failed: ls.failed, moves: ls.moves },
   });
 
@@ -282,20 +285,22 @@ export function createGame(stage: Stage, engine: Engine, emit: (v: View) => void
   }
 
   const game = {
-    async start(s: Settings) {
+    /** A new game, or with `pgn` one taken up where it was (after a reload): the stone goes straight to that position. */
+    async start(s: Settings, pgn = '') {
       settings = s;
       lesson = null;
       const g = ++generation;
       engine.stop();
       engine.newGame();
       chess.reset();
+      if (pgn) try { chess.loadPgn(pgn); if (chess.isGameOver()) chess.reset(); } catch { chess.reset(); } // a finished one starts afresh
       deselect();
       promoting = null;
       thinking = false;
       phase = 'playing';
       busy = true;
       // The last game's stone walks home and gathers itself while the camera comes round.
-      const rebuilt = stage.board.rebuild(chess.board(), 0);
+      const rebuilt = stage.board.rebuild(chess.board(), chess.history().length);
       stage.board.highlight({});
       publish();
       // Play may be the very first gesture: the conch waits for the sounds to arrive.

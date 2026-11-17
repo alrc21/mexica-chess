@@ -25,6 +25,8 @@ const WHERE: Record<Place, { label: string; line: string }> = {
   calakmul: { label: 'Calakmul, Campeche', line: 'on a temple above the forest of Calakmul.' },
 };
 type Step = 'carved' | 'side' | 'against' | 'level' | 'place' | 'hour';
+const SAVE = 'mc-game';
+type Saved = { pgn: string; settings: Settings; carving: Carving; place: Place; day: boolean };
 const TOUCH = typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches;
 
 const fade = (on: boolean, ms = 900): CSSProperties => ({
@@ -68,7 +70,16 @@ export default function App() {
         stage.current = s;
         setMuted(s.audio.muted);
         game.current = createGame(s, engine, setView);
-        game.current.view();
+        const saved = (() => { try { return JSON.parse(sessionStorage.getItem(SAVE) ?? 'null') as Saved | null; } catch { return null; } })();
+        if (saved) {
+          // Back from a reload mid-game (a lost GPU context): the same stone, place and hour, straight to the position.
+          setSettings(saved.settings); setCarving(saved.carving); setPlace(saved.place); setDay(saved.day);
+          Object.assign(SIDE, CARVING[saved.carving].sides);
+          s.setPlace(saved.place);
+          s.setStone(saved.carving);
+          if (saved.day) s.setDay(true);
+          game.current.start(saved.settings, saved.pgn);
+        } else game.current.view();
         if (import.meta.env.DEV) Object.assign(window, { __game: game.current, __stage: s });
       },
       onSquare: hit => game.current?.click(hit) ?? false,
@@ -80,6 +91,12 @@ export default function App() {
   }, []);
 
   useEffect(() => { document.documentElement.dataset.theme = day ? 'day' : 'night'; }, [day]);
+  // The game in progress outlives a reload; New game, the end of a game or a lesson let it go.
+  useEffect(() => {
+    if (!view) return;
+    if (view.phase === 'playing') sessionStorage.setItem(SAVE, JSON.stringify({ pgn: view.pgn, settings: view.settings, carving, place, day } satisfies Saved));
+    else sessionStorage.removeItem(SAVE);
+  }, [view, carving, place, day]);
   // The temple stands complete for a breath before the curtain lifts.
   const ready = !!view;
   useEffect(() => {
@@ -230,27 +247,27 @@ export default function App() {
           </button>
           <div className={`mt-5 flex-col gap-2.5 md:mt-7 md:flex ${step === null ? 'hidden' : 'flex'}`}>
             <div className={row('carved')}>
-              <Segmented label="Carved in" labelWidth="5.5rem" tone={tone} options={CARVINGS.map(c => CARVING[c].label)}
+              <Segmented label="Carved in" labelWidth="4.75rem" tone={tone} options={CARVINGS.map(c => CARVING[c].label)}
                 index={CARVINGS.indexOf(carving)} onSelect={i => { changeCarving(CARVINGS[i]); next('carved'); }} />
             </div>
             <div className={row('side')}>
-              <Segmented label="You play" labelWidth="5.5rem" tone={tone} options={[CARVING[carving].sides.w, CARVING[carving].sides.b]}
+              <Segmented label="You play" labelWidth="4.75rem" tone={tone} options={[CARVING[carving].sides.w, CARVING[carving].sides.b]}
                 index={SIDES.indexOf(settings.side)} onSelect={i => { setSettings(s => ({ ...s, side: SIDES[i] })); next('side'); }} />
             </div>
             <div className={row('against')}>
-              <Segmented label="Against" labelWidth="5.5rem" tone={tone} options={['The machine', 'A friend']}
+              <Segmented label="Against" labelWidth="4.75rem" tone={tone} options={['The machine', 'A friend']}
                 index={MODES.indexOf(settings.mode)} onSelect={i => { setSettings(s => ({ ...s, mode: MODES[i] })); next('against', MODES[i]); }} />
             </div>
             <div className={row('level')} style={{ opacity: settings.mode === 'machine' ? 1 : 0.3, transition: `opacity 400ms ${EASE}` }}>
-              <Segmented label="Level" labelWidth="5.5rem" tone={tone} options={['Easy', 'Medium', 'Hard']}
+              <Segmented label="Level" labelWidth="4.75rem" tone={tone} options={['Easy', 'Medium', 'Hard']}
                 index={LEVELS.indexOf(settings.level)} onSelect={i => { setSettings(s => ({ ...s, level: LEVELS[i] })); next('level'); }} />
             </div>
             <div className={row('place')}>
-              <Segmented label="Place" labelWidth="5.5rem" tone={tone} options={['Tenochtitlan', 'Calakmul']}
+              <Segmented label="Place" labelWidth="4.75rem" tone={tone} options={['Tenochtitlan', 'Calakmul']}
                 index={PLACES.indexOf(place)} onSelect={i => { changePlace(PLACES[i]); next('place'); }} />
             </div>
             <div className={row('hour')}>
-              <Segmented label="Hour" labelWidth="5.5rem" tone={tone} options={['Night', 'Day']}
+              <Segmented label="Hour" labelWidth="4.75rem" tone={tone} options={['Night', 'Day']}
                 index={day ? 1 : 0} onSelect={i => { changeHour(i === 1); next('hour'); }} />
             </div>
           </div>
