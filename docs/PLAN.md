@@ -272,4 +272,7 @@ node scripts/about-shots.mjs    # clean frames for the About page → public/sti
 node scripts/lookdev.mjs <dir> stone jade amber   # the same frames in stone and each mineral
 blender -b --factory-startup -P blender/fracture.py -- king   # pre-fracture a piece
 blender -b --factory-startup -P blender/polish.py -- king     # the minerals' bake: polished carving + thickness
+blender -b --factory-startup -P blender/glaze.py -- king      # clay's masks: cavity wash, worn edges, firing mottle
+node scripts/context.mjs <dir>  # a lost WebGL context: the board comes back, a forced reload resumes the game (CARVE=Clay)
+BASE=… node scripts/contrast.mjs <tag>   # WCAG contrast of armies, squares and frame on the phone playing view
 ```
